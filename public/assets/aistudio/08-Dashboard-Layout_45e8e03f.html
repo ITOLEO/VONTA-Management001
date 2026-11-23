@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>VONTA | Project Overview chart layout</title>
+<style>
+:root{font-family:Inter,system-ui,sans-serif;color:#1b2a4a;background:#f4f3ef;font-size:16px}*{box-sizing:border-box}body{margin:0}header{background:#fff;border-bottom:1px solid #d9dee2;padding:16px max(4vw,20px);display:flex;gap:16px;align-items:center}header strong{font-size:22px}header span{border-left:1px solid #d9dee2;padding-left:16px;color:#4f5c67}main{max-width:1510px;margin:auto;padding:28px max(3.2vw,16px) 64px}h1{font-size:clamp(28px,3vw,40px);letter-spacing:-.035em;margin:4px 0 5px}h2{font-size:21px;margin:0}h3{font-size:17px;margin:0}p{color:#4f5c67;margin:6px 0 12px}small{color:#4f5c67;display:block;font-size:13px}.head,.tools,.legend{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.head{justify-content:space-between;margin:28px 0 12px}.tools{gap:8px}button,select,input{font:inherit;color:#1b2a4a;background:white;border:1px solid #bac2c9;border-radius:6px;padding:7px 9px;font-size:14px;min-height:36px}button{cursor:pointer}button:disabled{opacity:.45;cursor:default}button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid #0b63ce;outline-offset:2px}label{display:flex;align-items:center;gap:5px;color:#4f5c67;font-size:13px}.row{display:grid;grid-template-columns:.84fr 1.25fr 1.1fr;gap:14px}.panel,.budget{background:white;border:1px solid #d9dee2;border-radius:10px;padding:18px;min-width:0}.row .panel{height:354px;display:flex;flex-direction:column;overflow:auto}.plot{width:100%;height:204px;flex-shrink:0}.ring{align-self:center;margin:12px auto;position:relative;width:144px;height:144px;border-radius:50%;display:grid;place-items:center}.ring:before{content:"";position:absolute;inset:14px;border-radius:50%;background:white}.ring strong{position:relative;font-size:20px;text-align:center}.legend{font-size:13px;gap:10px;color:#4f5c67}.key{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px}.rail{display:flex;gap:14px;overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:thin}.budget{flex:0 0 calc((100% - 28px)/3);scroll-snap-align:start}.budget .ring{width:131px;height:131px}.navbuttons{display:flex;gap:6px}.big{width:100%;height:240px}.tip{font-variant-numeric:tabular-nums}.panel small,.budget small{line-height:1.4}.head p{margin-bottom:0}.sub{margin-top:auto}.keybox{margin-top:14px}svg text{font-family:Inter,system-ui,sans-serif;fill:#4f5c67}.figure-head{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:38px}.detail{margin-top:8px;line-height:1.5}.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}@media(max-width:950px){.row{grid-template-columns:1fr 1fr}.row .panel:first-child{grid-column:span 2}.budget{flex-basis:calc((100% - 14px)/2)}}@media(max-width:630px){.row{display:flex;flex-direction:column}.budget{flex-basis:90%}.head{align-items:flex-start}.tools{width:100%}.row .panel{height:330px}.big{height:220px}}
+</style></head><body><header><strong>VONTA</strong><span>Paviliun Kerja / Project Overview</span></header><main>
+<small>Design reference · Synthetic project data</small><h1>Project Overview</h1><p>Department progress, attendance and monthly budget. The fixture covers 2–4 November 2026.</p>
+<section aria-label="Operational dashboard"><div class="head"><h2>Department progress and attendance</h2><div class="tools"><label>Department <select id="dep"></select></label><label>Period <select id="period"><option>Month</option><option>Day</option><option>Year</option></select></label><label>Through <input type="date" id="day" value="2026-11-04"></label><label>Unit <select id="unit"><option>Count</option><option>Percent</option></select></label></div></div>
+<div class="row"><article class="panel"><div class="figure-head"><h3>Approved Pins</h3></div><div class="ring" id="pr"></div><small id="pd" class="detail"></small></article>
+<article class="panel"><div class="figure-head"><h3>Work Pins</h3><select id="pinmode" aria-label="Pin chart type"><option>Bars</option><option>Trend</option></select></div><div class="plot" id="pb"></div><div id="pl" class="legend sub"></div></article>
+<article class="panel"><div class="figure-head"><h3>Attendance</h3></div><div class="plot" id="ab"></div><small class="sub" id="ad"></small></article></div></section>
+<section><div class="head"><div><h2>Monthly budget allocation</h2><p>Posted department use and remaining allocation</p></div><div class="tools"><label>Period <select id="bp"><option>Month</option><option>Day</option><option>Year</option></select></label><label>Through <input type="date" id="bd" value="2026-11-04"></label><label>Unit <select id="bu"><option>Amount</option><option>Percent</option></select></label><div class="navbuttons"><button id="prev" aria-label="Previous departments">←</button><button id="next" aria-label="Next departments">→</button></div></div></div><div class="rail" id="rail" aria-label="Department budget cards"></div></section>
+<section><div class="head"><h2>Department budget usage</h2><div class="tools"><label>Department <select id="ud"></select></label><label>Period <select id="up"><option>Month</option><option>Day</option><option>Year</option></select></label><label>Through <input type="date" id="uy" value="2026-11-04"></label><label>Unit <select id="uu"><option>Amount</option><option>Percent</option></select></label><label>Chart <select id="um"><option>Line</option><option>Bar</option></select></label></div></div><article class="panel"><div class="big" id="bb"></div><div class="legend" id="bl"></div></article></section></main>
+<script>
+const $=id=>document.getElementById(id);
+const names=['Civil','Electrical','Plumbing','Finishing'];
+const dates=['2026-11-02','2026-11-03','2026-11-04'];
+const data=[
+ {a:1000000,sp:[50000,50000,100000],done:[1,2,3],total:[4,6,8],att:[[3,0,1],[4,0,0],[3,1,0]]},
+ {a:800000,sp:[0,50000,80000],done:[0,1,2],total:[3,5,5],att:[[1,1,0],[2,0,0],[1,0,1]]},
+ {a:600000,sp:[0,0,40000],done:[1,1,2],total:[2,2,3],att:[[2,0,0],[1,0,1],[2,0,0]]},
+ {a:500000,sp:[0,40000,10000],done:[0,0,1],total:[0,2,4],att:[[1,0,0],[1,0,0],[0,1,0]]}];
+const navy='#223857',orange='#a64011',green='#007561',red='#ae4037',grey='#dde3e5';
+for(const id of ['dep','ud']) $(''+id).replaceChildren(...['All',...names].map(n=>new Option(n,n)));
+const fmt=n=>new Intl.NumberFormat('en-US').format(n);
+const rup=n=>'Rp '+fmt(n);
+const pct=(n,d)=>d?Math.round(n*100/d):0;
+const key=(n,c)=>'<span><i class="key" style="background:'+c+'"></i>'+n+'</span>';
+function ring(el,n,d,txt,c1,c2){el.style.background=d?'conic-gradient('+c1+' '+pct(n,d)+'%, '+c2+' 0)':grey;el.innerHTML='<strong>'+txt+'</strong>'}
+function interval(day,period){return [period==='Day'?day:period==='Month'?day.slice(0,7)+'-01':day.slice(0,4)+'-01-01',day]}
+function indices(day,period){const [s,e]=interval(day,period);return dates.map((x,i)=>x>=s&&x<=e?i:-1).filter(i=>i>=0)}
+function draw(el,labs,series,colors,mode,unit,empty=false){
+ const W=520,H=226,L=55,R=18,T=16,B=168,step=(W-L-R)/Math.max(1,labs.length);
+ const max=unit==='%'?100:Math.max(1,...series.flat());
+ let svg='<svg width="100%" height="100%" viewBox="0 0 '+W+' '+H+'" role="img" aria-label="'+el.parentElement.querySelector('h3')?.textContent+'">';
+ if(empty){el.innerHTML='<p class="detail">No records for this selection.</p>';return}
+ for(let i=0;i<=4;i++){let val=max*i/4,y=B-(B-T)*i/4;let tick=max>1000?Math.round(val/1000)+'k':Number(val.toFixed(1));svg+='<path d="M'+L+' '+y+'H'+(W-R)+'" stroke="#e2e6e8"/><text x="'+(L-5)+'" y="'+(y+4)+'" text-anchor="end" font-size="13">'+tick+unit+'</text>'}
+ const group=step*.65,bw=group/series.length;
+ series.forEach((a,j)=>{let points=[];a.forEach((v,i)=>{let x=L+(i+.5)*step,y=B-v/max*(B-T);points.push([x,y]);if(mode==='bar'){svg+='<rect x="'+(x-group/2+j*bw)+'" y="'+y+'" width="'+Math.max(2,bw-2)+'" height="'+(B-y)+'" fill="'+colors[j]+'"><title>'+labs[i]+' '+fmt(v)+unit+'</title></rect>'}});if(mode==='line'){svg+='<polyline fill="none" stroke="'+colors[j]+'" stroke-width="3" points="'+points.map(p=>p.join(',')).join(' ')+'"/>';points.forEach(([x,y],i)=>{svg+='<circle cx="'+x+'" cy="'+y+'" r="4" fill="'+colors[j]+'"><title>'+labs[i]+' '+fmt(a[i])+unit+'</title></circle>'})}});
+ labs.forEach((s,i)=>{svg+='<text x="'+(L+(i+.5)*step)+'" y="'+(B+25)+'" text-anchor="middle" font-size="14">'+s+'</text>'});
+ const title=el.id==='bb'?'Department budget usage':el.id==='ab'?'Attendance':'Work Pins';
+ el.innerHTML=svg.replace(/aria-label="[^"]*"/,'aria-label="'+title+'"')+'</svg><span class="sr">'+labs.map((s,i)=>s+': '+series.map(a=>a[i]+unit).join(', ')).join('. ')+'</span>';
+}
+function operation(){
+ const scope=names.map((n,i)=>$('dep').value==='All'||$('dep').value===n?i:-1).filter(i=>i>=0);
+ const day=$('day').value, ix=indices(day,$('period').value),j=dates.findLastIndex(x=>x<=day),per=$('unit').value==='Percent';const usable=j>=0&&day.startsWith('2026-11')&&ix.length>0;
+ const sum=(field,t)=>scope.reduce((v,i)=>v+data[i][field][t],0);
+ const done=usable?sum('done',j):0,total=usable?sum('total',j):0;
+ ring($('pr'),done,total,total?(per?pct(done,total)+'%':done+'/'+total):'—',navy,grey);
+ $('pd').textContent=usable?done+' of '+total+' eligible Pins approved as of '+day+'.':'No records for this selection.';
+ const labels=scope.map(i=>names[i]),q=(v,n)=>per?pct(v,n):v;let labs,ss,cols,mode;
+ if($('pinmode').value==='Trend'){labs=ix.map(i=>dates[i].slice(5));ss=[ix.map(t=>q(sum('done',t),sum('total',t)))];cols=[navy];mode='line'}
+ else if(scope.length===1){labs=['Approved','Outstanding'];ss=[[q(done,total),q(total-done,total)]];cols=[navy];mode='bar'}
+ else{labs=labels;ss=[scope.map(i=>q(data[i].done[j]||0,data[i].total[j]||0)),scope.map(i=>q((data[i].total[j]||0)-(data[i].done[j]||0),data[i].total[j]||0))];cols=[navy,orange];mode='bar'}
+ draw($('pb'),labs,ss,cols,mode,per?'%':'',!usable);
+ $('pl').innerHTML=scope.length===1&&mode==='bar'?key('Pins by completion status',navy):key('Approved',navy)+(ss.length===2?key('Outstanding',orange):'');
+ const av=[0,0,0];ix.forEach(t=>scope.forEach(i=>data[i].att[t].forEach((x,k)=>av[k]+=x)));const den=av.reduce((a,b)=>a+b,0);
+ draw($('ab'),['Present','Izin','Alfa'],[av.map(x=>q(x,den))],[navy],'bar',per?'%':'',!den);
+ $('ad').textContent=den?den+($('period').value==='Day'?' eligible workers':' eligible worker-days')+' · '+av[1]+' excused.':'Coverage unavailable.';
+}
+function money(i,day,period){const d=data[i];if(!day||day<'2026-11-01'||(period==='Year'?day.slice(0,4)!=='2026':day.slice(0,7)!=='2026-11'))return [0,0];return [d.a,d.sp.reduce((a,v,k)=>dates[k]<=day?a+v:a,0)]}
+function budgets(){
+ const rail=$('rail');rail.replaceChildren();names.forEach((n,i)=>{const [a,u]=money(i,$('bd').value,$('bp').value),unit=$('bu').value==='Amount';const e=document.createElement('article');e.className='budget';
+ const dayIndex=dates.indexOf($('bd').value),movement=dayIndex<0?0:data[i].sp[dayIndex];
+ e.innerHTML='<h3>'+n+'</h3><small>Allocated '+rup(a)+'</small><div class="ring"></div><div class="legend">'+key('Used '+(unit?rup(u):pct(u,a)+'%'),red)+key('Unused '+(unit?rup(a-u):pct(a-u,a)+'%'),green)+'</div><small class="detail">Remaining as of '+$('bd').value+($('bp').value==='Day'?' · Posted today '+rup(movement):'')+'</small>';ring(e.querySelector('.ring'),u,a,a?rup(a-u):'—',red,green);rail.append(e)});
+ const ids=names.map((n,i)=>$('ud').value==='All'||$('ud').value===n?i:-1).filter(i=>i>=0);
+ const items=ids.map(i=>money(i,$('uy').value,$('up').value));const per=$('uu').value==='Percent';
+ draw($('bb'),ids.map(i=>names[i]),[items.map(([a])=>per?(a?100:0):a),items.map(([a,u])=>per?pct(u,a):u)],[navy,orange],$('um').value.toLowerCase(),per?'%':'',!items.some(([a])=>a));
+ $('bl').innerHTML=key('Allocated',navy)+key('Used',orange)+'<span>'+(per?'Percent of allocation':'IDR · axis in thousands when marked k')+'</span>';edges();
+}
+function edges(){const r=$('rail');$('prev').disabled=r.scrollLeft<2;$('next').disabled=r.scrollLeft+r.clientWidth>=r.scrollWidth-2}
+$('prev').onclick=()=>$('rail').scrollBy({left:-$('rail').firstElementChild.offsetWidth-14,behavior:'smooth'});$('next').onclick=()=>$('rail').scrollBy({left:$('rail').firstElementChild.offsetWidth+14,behavior:'smooth'});$('rail').onscroll=edges;
+for(const id of ['dep','period','day','unit','pinmode'])$(id).onchange=operation;
+for(const id of ['bp','bd','bu','ud','up','uy','uu','um'])$(id).onchange=budgets;window.addEventListener('resize',edges);operation();budgets();
+</script></body></html>

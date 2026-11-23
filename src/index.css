@@ -1,0 +1,192 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --color-vonta-navy: #1B2A4A;
+  --color-vonta-orange: #D4652F;
+  --color-vonta-action: #A64011;
+  --color-vonta-action-hover: #8C350E;
+  --color-vonta-canvas: #F4F3EF;
+  --color-vonta-surface: #FFFFFF;
+  --color-vonta-muted: #4F5C67;
+  --color-vonta-border: #D9DEE2;
+  --color-vonta-focus: #0B63CE;
+}
+
+:root {
+  color-scheme: light;
+  --vonta-bg-canvas: #F4F3EF;
+  --vonta-bg-surface: #FFFFFF;
+  --vonta-bg-subtle: #F7F7F5;
+  --vonta-bg-elevated: #FAF9F6;
+  --vonta-text-primary: #1B2A4A;
+  --vonta-text-secondary: #4F5C67;
+  --vonta-border-default: #D9DEE2;
+  --vonta-border-subtle: #E6E8EB;
+  --vonta-accent: #D4652F;
+  --vonta-action: #A64011;
+  --vonta-focus: #0B63CE;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --vonta-bg-canvas: #0E131B;
+  --vonta-bg-surface: #151C26;
+  --vonta-bg-subtle: #1B2431;
+  --vonta-bg-elevated: #202B3B;
+  --vonta-text-primary: #F1F5F9;
+  --vonta-text-secondary: #A9B7C6;
+  --vonta-border-default: #2D3B4E;
+  --vonta-border-subtle: #243040;
+  --vonta-accent: #F0824B;
+  --vonta-action: #D4652F;
+  --vonta-focus: #60A5FA;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    background-color: var(--vonta-bg-canvas);
+    color: var(--vonta-text-primary);
+    font-size: 16px;
+    line-height: 1.5;
+  }
+
+  body {
+    background-color: var(--vonta-bg-canvas);
+    color: var(--vonta-text-primary);
+    transition: background-color 140ms ease, color 140ms ease;
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--vonta-focus);
+    outline-offset: 2px;
+  }
+}
+
+/* L05: Provisional +3-4 px legibility scale for ultra-small labels & captions while keeping controls roomy */
+.text-\[10px\] {
+  font-size: 13px !important;
+  line-height: 1.35 !important;
+}
+.text-\[11px\] {
+  font-size: 14px !important;
+  line-height: 1.4 !important;
+}
+.text-\[12px\] {
+  font-size: 14.5px !important;
+  line-height: 1.45 !important;
+}
+.text-xs {
+  font-size: 14px !important;
+  line-height: 1.45 !important;
+}
+
+/* L05: Real Dark Theme Token Overrides across page surfaces, cards, headers, drawers, inputs & borders */
+html[data-theme="dark"] .bg-\[\#F4F3EF\],
+html[data-theme="dark"] .bg-\[\#F8F8F6\],
+html[data-theme="dark"] .bg-\[\#FAF9F6\],
+html[data-theme="dark"] .bg-\[\#F7F7F5\] {
+  background-color: var(--vonta-bg-canvas) !important;
+}
+
+html[data-theme="dark"] .bg-white,
+html[data-theme="dark"] .bg-white\/95,
+html[data-theme="dark"] .bg-white\/90 {
+  background-color: var(--vonta-bg-surface) !important;
+}
+
+html[data-theme="dark"] .bg-\[\#F4F3EF\]\/60,
+html[data-theme="dark"] .bg-\[\#F4F3EF\]\/70,
+html[data-theme="dark"] .bg-\[\#F4F3EF\]\/75,
+html[data-theme="dark"] .bg-\[\#F4F3EF\]\/50,
+html[data-theme="dark"] .bg-\[\#FAFAFA\],
+html[data-theme="dark"] .bg-\[\#F5F7FA\],
+html[data-theme="dark"] .bg-\[\#EEF2F7\] {
+  background-color: var(--vonta-bg-subtle) !important;
+}
+
+html[data-theme="dark"] .hover\:bg-\[\#F4F3EF\]:hover,
+html[data-theme="dark"] .hover\:bg-\[\#F7F7F5\]:hover,
+html[data-theme="dark"] .hover\:bg-\[\#EEF2F7\]:hover {
+  background-color: var(--vonta-bg-elevated) !important;
+}
+
+html[data-theme="dark"] .text-\[\#1B2A4A\],
+html[data-theme="dark"] .text-\[\#0F172A\],
+html[data-theme="dark"] .text-slate-900 {
+  color: var(--vonta-text-primary) !important;
+}
+
+html[data-theme="dark"] .text-\[\#4F5C67\],
+html[data-theme="dark"] .text-\[\#5A6772\],
+html[data-theme="dark"] .text-\[\#64748B\],
+html[data-theme="dark"] .text-slate-600,
+html[data-theme="dark"] .text-slate-500 {
+  color: var(--vonta-text-secondary) !important;
+}
+
+html[data-theme="dark"] .border-\[\#D9DEE2\],
+html[data-theme="dark"] .border-\[\#E6E8EB\],
+html[data-theme="dark"] .border-\[\#E2E6EA\],
+html[data-theme="dark"] .border-slate-200 {
+  border-color: var(--vonta-border-default) !important;
+}
+
+html[data-theme="dark"] .divide-\[\#E6E8EB\] > :not(:first-child),
+html[data-theme="dark"] .divide-\[\#D9DEE2\] > :not(:first-child) {
+  border-color: var(--vonta-border-subtle) !important;
+}
+
+html[data-theme="dark"] input,
+html[data-theme="dark"] select,
+html[data-theme="dark"] textarea {
+  background-color: var(--vonta-bg-subtle);
+  color: var(--vonta-text-primary);
+  border-color: var(--vonta-border-default);
+}
+
+html[data-theme="dark"] .bg-\[\#1B2A4A\] {
+  background-color: #273E6B !important;
+  color: #F8FAFC !important;
+}
+
+html[data-theme="dark"] .bg-\[\#FFF4EE\],
+html[data-theme="dark"] .bg-\[\#FFF3EB\] {
+  background-color: #362218 !important;
+}
+
+html[data-theme="dark"] .text-\[\#A64011\] {
+  color: #FDBA74 !important;
+}
+
+html[data-theme="dark"] .bg-\[\#ECFDF3\] {
+  background-color: #132C20 !important;
+}
+
+html[data-theme="dark"] .bg-\[\#FEF2F2\] {
+  background-color: #35181B !important;
+}
+
+html[data-theme="dark"] .bg-\[\#EFF6FF\] {
+  background-color: #17273E !important;
+}
+
+html[data-theme="dark"] .bg-\[\#FFF8EB\] {
+  background-color: #332712 !important;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
