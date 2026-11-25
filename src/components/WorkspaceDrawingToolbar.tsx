@@ -17,13 +17,16 @@ import {
   Palette,
   Pencil,
   RectangleHorizontal,
+  Redo2,
   Ruler,
   Shapes,
   SlidersHorizontal,
   Square,
   Trash2,
+  Undo2,
   X,
 } from 'lucide-react';
+import { formatAnnotationDisplaySummary } from '../domain/privateAnnotationHistory';
 import {
   clampStrokeWidthPx,
   MAX_STROKE_WIDTH_PX,
@@ -38,6 +41,7 @@ import {
   type DrawingStorageMode,
   type DrawingStrokeWidthKey,
   type DrawingToolType,
+  type PrivateSurfaceAnnotation,
 } from '../utils/privateDrawingStore';
 import { ColorPickerControl } from './ColorPickerControl';
 
@@ -63,6 +67,15 @@ interface WorkspaceDrawingToolbarProps {
   storageWarning: string | null;
   rejectedNotice: string | null;
   isModelCalibrated?: boolean;
+  selectedAnnotation?: PrivateSurfaceAnnotation | null;
+  onDeleteSelectedAnnotation?: () => void;
+  onDeselectAnnotation?: () => void;
+  canUndo?: boolean;
+  canRedo?: boolean;
+  undoCount?: number;
+  redoCount?: number;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }
 
 type ToolGroupId =
@@ -77,36 +90,63 @@ type ToolGroupId =
 const FREEHAND_TOOLS: ReadonlyArray<{
   id: DrawingToolType;
   label: string;
+  shortcut: string;
   hint: string;
   icon: React.ComponentType<{ className?: string }>;
 }> = [
-  { id: 'pencil', label: 'Pencil', hint: 'Fine crisp line', icon: Pencil },
-  { id: 'marker', label: 'Marker', hint: 'Broad translucent highlight', icon: Highlighter },
-  { id: 'brush', label: 'Brush', hint: 'Solid freehand stroke', icon: Brush },
+  { id: 'pencil', label: 'Pencil', shortcut: 'P', hint: 'Fine crisp line', icon: Pencil },
+  {
+    id: 'marker',
+    label: 'Marker',
+    shortcut: 'M',
+    hint: 'Broad translucent highlight',
+    icon: Highlighter,
+  },
+  { id: 'brush', label: 'Brush', shortcut: 'B', hint: 'Solid freehand stroke', icon: Brush },
 ];
 
 const RULER_TOOLS: ReadonlyArray<{
   id: DrawingToolType;
   label: string;
+  shortcut: string;
   hint: string;
   icon: React.ComponentType<{ className?: string }>;
 }> = [
-  { id: 'ruler_straight', label: 'Straight ruler', hint: '2-point distance on surface', icon: Ruler },
-  { id: 'ruler_right_angle', label: 'Right-angle ruler', hint: 'L-shape 90° legs', icon: CornerDownRight },
-  { id: 'ruler_angle', label: 'Angle ruler', hint: 'Vertex + two rays (°)', icon: Compass },
+  {
+    id: 'ruler_straight',
+    label: 'Straight ruler',
+    shortcut: 'R',
+    hint: '2-point distance on surface',
+    icon: Ruler,
+  },
+  {
+    id: 'ruler_right_angle',
+    label: 'Right-angle ruler',
+    shortcut: 'R',
+    hint: 'L-shape 90° legs',
+    icon: CornerDownRight,
+  },
+  {
+    id: 'ruler_angle',
+    label: 'Angle ruler',
+    shortcut: 'R',
+    hint: 'Vertex + two rays (°)',
+    icon: Compass,
+  },
 ];
 
 const SHAPE_TOOLS: ReadonlyArray<{
   id: DrawingToolType;
   label: string;
+  shortcut: string;
   icon: React.ComponentType<{ className?: string }>;
 }> = [
-  { id: 'line', label: 'Line', icon: Minus },
-  { id: 'arrow', label: 'Arrow', icon: ArrowUpRight },
-  { id: 'circle', label: 'Circle', icon: Circle },
-  { id: 'ellipse', label: 'Ellipse', icon: Circle },
-  { id: 'square', label: 'Square', icon: Square },
-  { id: 'rectangle', label: 'Rectangle', icon: RectangleHorizontal },
+  { id: 'line', label: 'Line', shortcut: 'U', icon: Minus },
+  { id: 'arrow', label: 'Arrow', shortcut: 'U', icon: ArrowUpRight },
+  { id: 'circle', label: 'Circle', shortcut: 'U', icon: Circle },
+  { id: 'ellipse', label: 'Ellipse', shortcut: 'U', icon: Circle },
+  { id: 'square', label: 'Square', shortcut: 'U', icon: Square },
+  { id: 'rectangle', label: 'Rectangle', shortcut: 'U', icon: RectangleHorizontal },
 ];
 
 const LINE_STYLE_OPTIONS: ReadonlyArray<{ id: DrawingLineStyle; label: string; preview: string }> = [
@@ -115,49 +155,54 @@ const LINE_STYLE_OPTIONS: ReadonlyArray<{ id: DrawingLineStyle; label: string; p
   { id: 'dotted', label: 'Dotted', preview: 'border-dotted' },
 ];
 
-function toolLabel(tool: DrawingToolType, deleteMode: boolean): string {
-  if (deleteMode || tool === 'eraser') return 'Eraser';
+function toolMeta(
+  tool: DrawingToolType,
+  deleteMode: boolean
+): { label: string; shortcut: string } {
+  if (deleteMode || tool === 'eraser') return { label: 'Eraser', shortcut: 'E' };
   switch (tool) {
     case 'cursor':
     case 'pan':
-      return 'Cursor';
+      return { label: 'Cursor', shortcut: 'V' };
     case 'pencil':
-      return 'Pencil';
+      return { label: 'Pencil', shortcut: 'P' };
     case 'marker':
-      return 'Marker';
+      return { label: 'Marker', shortcut: 'M' };
     case 'brush':
-      return 'Brush';
+      return { label: 'Brush', shortcut: 'B' };
     case 'ruler_straight':
-      return 'Straight ruler';
+      return { label: 'Straight ruler', shortcut: 'R' };
     case 'ruler_right_angle':
-      return 'Right-angle ruler';
+      return { label: 'Right-angle ruler', shortcut: 'R' };
     case 'ruler_angle':
-      return 'Angle ruler';
+      return { label: 'Angle ruler', shortcut: 'R' };
     case 'line':
-      return 'Line';
+      return { label: 'Line', shortcut: 'U' };
     case 'arrow':
-      return 'Arrow';
+      return { label: 'Arrow', shortcut: 'U' };
     case 'circle':
-      return 'Circle';
+      return { label: 'Circle', shortcut: 'U' };
     case 'ellipse':
-      return 'Ellipse';
+      return { label: 'Ellipse', shortcut: 'U' };
     case 'square':
-      return 'Square';
+      return { label: 'Square', shortcut: 'U' };
     case 'rectangle':
-      return 'Rectangle';
+      return { label: 'Rectangle', shortcut: 'U' };
     case 'wall_fill':
-      return 'Wall fill';
+      return { label: 'Wall fill', shortcut: 'G' };
     default:
-      return 'Cursor';
+      return { label: 'Cursor', shortcut: 'V' };
   }
 }
 
 /**
- * Compact vertical grouped Workspace tools rail (Doc 05).
- * Positioned beside the project rail inside the viewport.
- * - Groups: Cursor (with explicit red Stop drawing action — no old Pan label), Freehand,
- *   Rulers, Shapes, Edit (Eraser + private wall Fill + Clear own), Stroke (numeric 1–32 +
- *   presets + Solid/Dashed/Dotted), and Color (shared ColorPickerControl).
+ * Compact Photoshop-style vertical tool rail for private field annotations.
+ * - Initial tool is Cursor (V).
+ * - Grouped flyouts for Freehand (Pencil/Marker/Brush), Rulers (Straight/Right-angle/Angle),
+ *   Shapes (Line/Arrow/Circle/Ellipse/Square/Rectangle), Edit (Eraser/Wall fill/Clear own),
+ *   Stroke settings (numeric 1–32, presets, Solid/Dashed/Dotted), and Color (hex, wheel, eyedropper).
+ * - Includes Undo (Ctrl+Z), Redo (Ctrl+Shift+Z), active tool + shortcut badge, and
+ *   selected-mark Delete bar (Delete/Backspace).
  * - Hidden completely when user lacks private local drawing authority.
  */
 export function WorkspaceDrawingToolbar({
@@ -182,6 +227,15 @@ export function WorkspaceDrawingToolbar({
   storageWarning,
   rejectedNotice,
   isModelCalibrated = true,
+  selectedAnnotation = null,
+  onDeleteSelectedAnnotation,
+  onDeselectAnnotation,
+  canUndo = false,
+  canRedo = false,
+  undoCount = 0,
+  redoCount = 0,
+  onUndo,
+  onRedo,
 }: WorkspaceDrawingToolbarProps) {
   const [openGroup, setOpenGroup] = useState<ToolGroupId | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
@@ -189,6 +243,7 @@ export function WorkspaceDrawingToolbar({
 
   const effectiveWidthPx = strokeWidthPx ?? strokeWidthKeyToPx(strokeWidth);
   const isDrawingActive = !isCursorModeTool(activeTool) || deleteMode;
+  const activeMeta = toolMeta(activeTool, deleteMode);
 
   const stopDrawing = () => {
     if (deleteMode) onToggleDeleteMode();
@@ -196,7 +251,7 @@ export function WorkspaceDrawingToolbar({
     setOpenGroup(null);
   };
 
-  // Escape cancels active drawing tool or closes open group popover
+  // Escape cancels active drawing tool or closes open flyout popover
   useEffect(() => {
     if (!canDraw) return;
     const onKeyDown = (e: KeyboardEvent) => {
@@ -254,52 +309,76 @@ export function WorkspaceDrawingToolbar({
     activeTool === 'rectangle';
   const isEditActive = deleteMode || activeTool === 'eraser' || activeTool === 'wall_fill';
 
+  // Resolve active sub-tool icon for each grouped Photoshop-style rail slot
+  const ActiveFreehandIcon =
+    FREEHAND_TOOLS.find((t) => t.id === activeTool)?.icon ?? Pencil;
+  const ActiveRulerIcon =
+    RULER_TOOLS.find((t) => t.id === activeTool)?.icon ?? Ruler;
+  const ActiveShapeIcon =
+    SHAPE_TOOLS.find((t) => t.id === activeTool)?.icon ?? Shapes;
+  const ActiveEditIcon =
+    activeTool === 'wall_fill' && !deleteMode ? PaintBucket : Eraser;
+
   const groupButtons: ReadonlyArray<{
     id: ToolGroupId;
     label: string;
+    shortcutHint?: string;
     active: boolean;
+    hasFlyout: boolean;
     icon: React.ReactNode;
   }> = [
     {
       id: 'cursor',
-      label: 'Cursor',
+      label: 'Cursor (V)',
+      shortcutHint: 'V',
       active: !isDrawingActive,
+      hasFlyout: false,
       icon: <MousePointer2 className="h-4 w-4" aria-hidden="true" />,
     },
     {
       id: 'freehand',
-      label: 'Freehand',
+      label: 'Freehand — Pencil (P), Marker (M), Brush (B)',
+      shortcutHint: 'P/M/B',
       active: isFreehandActive,
-      icon: <Pencil className="h-4 w-4" aria-hidden="true" />,
+      hasFlyout: true,
+      icon: <ActiveFreehandIcon className="h-4 w-4" aria-hidden="true" />,
     },
     {
       id: 'rulers',
-      label: 'Rulers',
+      label: 'Rulers — Straight, Right-angle, Angle (R)',
+      shortcutHint: 'R',
       active: isRulerActive,
-      icon: <Ruler className="h-4 w-4" aria-hidden="true" />,
+      hasFlyout: true,
+      icon: <ActiveRulerIcon className="h-4 w-4" aria-hidden="true" />,
     },
     {
       id: 'shapes',
-      label: 'Shapes',
+      label: 'Shapes — Line, Arrow, Circle, Ellipse, Square, Rectangle (U)',
+      shortcutHint: 'U',
       active: isShapeActive,
-      icon: <Shapes className="h-4 w-4" aria-hidden="true" />,
+      hasFlyout: true,
+      icon: <ActiveShapeIcon className="h-4 w-4" aria-hidden="true" />,
     },
     {
       id: 'edit',
-      label: 'Edit',
+      label: 'Edit — Eraser (E), Wall fill (G), Clear',
+      shortcutHint: 'E/G',
       active: isEditActive,
-      icon: <Eraser className="h-4 w-4" aria-hidden="true" />,
+      hasFlyout: true,
+      icon: <ActiveEditIcon className="h-4 w-4" aria-hidden="true" />,
     },
     {
       id: 'stroke',
-      label: `Stroke (${effectiveWidthPx}px)`,
+      label: `Line settings (${effectiveWidthPx}px · ${lineStyle})`,
       active: openGroup === 'stroke',
+      hasFlyout: true,
       icon: <SlidersHorizontal className="h-4 w-4" aria-hidden="true" />,
     },
     {
       id: 'color',
-      label: 'Color',
+      label: `Color (${colorHex})`,
       active: openGroup === 'color',
+      hasFlyout: true,
       icon: (
         <span className="relative inline-flex items-center justify-center">
           <Palette className="h-4 w-4" aria-hidden="true" />
@@ -322,9 +401,9 @@ export function WorkspaceDrawingToolbar({
       aria-orientation="vertical"
       className="pointer-events-auto relative flex items-start gap-2"
     >
-      {/* Compact Vertical Grouped Rail */}
+      {/* Compact Photoshop-Style Vertical Tool Rail */}
       <div className="flex flex-col items-center gap-1 rounded-xl border border-[#D9DEE2] bg-white/95 p-1.5 shadow-sm backdrop-blur">
-        {/* Explicit red prohibition Stop drawing button when drawing is active, or Cursor quick exit */}
+        {/* Explicit red prohibition Stop drawing button when drawing is active */}
         {isDrawingActive && (
           <button
             type="button"
@@ -332,7 +411,7 @@ export function WorkspaceDrawingToolbar({
             onClick={stopDrawing}
             title="Stop drawing and return to Cursor (Esc)"
             aria-label="Stop drawing"
-            className="mb-0.5 inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#B42318]/40 bg-[#FEF3F2] text-[#B42318] transition-colors hover:bg-[#FEE4E2] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE]"
+            className="mb-0.5 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-[#B42318]/40 bg-[#FEF3F2] text-[#B42318] transition-colors hover:bg-[#FEE4E2] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE]"
           >
             <Ban className="h-4 w-4" aria-hidden="true" />
           </button>
@@ -345,12 +424,22 @@ export function WorkspaceDrawingToolbar({
               key={grp.id}
               type="button"
               data-testid={`drawing-group-${grp.id}`}
-              aria-expanded={isOpen}
+              aria-expanded={grp.hasFlyout ? isOpen : undefined}
               aria-pressed={grp.active}
               title={grp.label}
               aria-label={grp.label}
-              onClick={() => setOpenGroup((prev) => (prev === grp.id ? null : grp.id))}
-              className={`inline-flex h-10 w-10 items-center justify-center rounded-lg text-[12px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE] ${
+              onClick={() => {
+                if (grp.id === 'cursor') {
+                  if (isDrawingActive) {
+                    stopDrawing();
+                  } else {
+                    setOpenGroup((prev) => (prev === 'cursor' ? null : 'cursor'));
+                  }
+                  return;
+                }
+                setOpenGroup((prev) => (prev === grp.id ? null : grp.id));
+              }}
+              className={`relative inline-flex h-9 w-9 items-center justify-center rounded-lg text-[12px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE] ${
                 grp.active
                   ? 'bg-[#1B2A4A] text-white'
                   : isOpen
@@ -359,9 +448,52 @@ export function WorkspaceDrawingToolbar({
               }`}
             >
               {grp.icon}
+              {grp.hasFlyout && (
+                <span
+                  aria-hidden="true"
+                  className="pointer-events-none absolute bottom-1 right-1 h-0 w-0 border-b-[4px] border-l-[4px] border-b-current border-l-transparent opacity-65"
+                />
+              )}
             </button>
           );
         })}
+
+        <div className="my-0.5 h-px w-6 bg-[#D9DEE2]" aria-hidden="true" />
+
+        {/* Local Edit Undo / Redo */}
+        <button
+          type="button"
+          data-testid="drawing-undo-btn"
+          disabled={!canUndo}
+          onClick={() => onUndo?.()}
+          title={canUndo ? `Undo local edit (${undoCount}) · Ctrl+Z` : 'Nothing to undo (Ctrl+Z)'}
+          aria-label="Undo local edit"
+          className={`inline-flex h-8 w-9 items-center justify-center rounded-lg transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE] ${
+            canUndo
+              ? 'text-[#1B2A4A] hover:bg-[#F4F3EF]'
+              : 'cursor-not-allowed text-[#4F5C67]/40'
+          }`}
+        >
+          <Undo2 className="h-4 w-4" aria-hidden="true" />
+        </button>
+
+        <button
+          type="button"
+          data-testid="drawing-redo-btn"
+          disabled={!canRedo}
+          onClick={() => onRedo?.()}
+          title={
+            canRedo ? `Redo local edit (${redoCount}) · Ctrl+Shift+Z` : 'Nothing to redo (Ctrl+Shift+Z)'
+          }
+          aria-label="Redo local edit"
+          className={`inline-flex h-8 w-9 items-center justify-center rounded-lg transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE] ${
+            canRedo
+              ? 'text-[#1B2A4A] hover:bg-[#F4F3EF]'
+              : 'cursor-not-allowed text-[#4F5C67]/40'
+          }`}
+        >
+          <Redo2 className="h-4 w-4" aria-hidden="true" />
+        </button>
 
         <div className="my-0.5 h-px w-6 bg-[#D9DEE2]" aria-hidden="true" />
 
@@ -373,7 +505,7 @@ export function WorkspaceDrawingToolbar({
           onClick={onToggleHideLocalDrawings}
           title={hideLocalDrawings ? 'Show my local marks' : 'Hide my local marks'}
           aria-label={hideLocalDrawings ? 'Show local marks' : 'Hide local marks'}
-          className={`inline-flex h-9 w-10 items-center justify-center rounded-lg transition-colors ${
+          className={`inline-flex h-8 w-9 items-center justify-center rounded-lg transition-colors ${
             hideLocalDrawings
               ? 'bg-[#F4F3EF] text-[#A64011]'
               : 'text-[#4F5C67] hover:bg-[#F4F3EF] hover:text-[#1B2A4A]'
@@ -386,7 +518,7 @@ export function WorkspaceDrawingToolbar({
           )}
         </button>
 
-        {/* Active numeric width & count badge */}
+        {/* Active numeric width badge */}
         <div
           className="px-1 text-center text-[10px] font-semibold tabular-nums text-[#4F5C67]"
           title={`${effectiveWidthPx} px · ${lineStyle} · ${annotationCount} local marks`}
@@ -395,49 +527,96 @@ export function WorkspaceDrawingToolbar({
         </div>
       </div>
 
-      {/* Side status & group popover column */}
+      {/* Side status, selected-mark delete bar & flyout column */}
       <div className="flex flex-col items-start gap-2">
-        {/* Active tool pill with explicit Stop drawing action */}
-        {isDrawingActive && (
+        {/* Compact Active Tool & Keyboard Shortcut Indicator */}
+        <div
+          data-testid="active-drawing-indicator"
+          className="flex items-center gap-2 rounded-xl border border-[#D9DEE2] bg-white/95 px-2.5 py-1.5 text-[12px] shadow-sm backdrop-blur"
+        >
+          <span
+            className="h-2.5 w-2.5 shrink-0 rounded-full"
+            style={{ backgroundColor: isDrawingActive ? colorHex : '#1B2A4A' }}
+            aria-hidden="true"
+          />
+          <span data-testid="active-tool-name" className="font-semibold text-[#1B2A4A]">
+            {activeMeta.label}
+          </span>
+          <kbd
+            data-testid="active-tool-shortcut"
+            className="rounded border border-[#D9DEE2] bg-[#F4F3EF] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[#1B2A4A]"
+          >
+            {activeMeta.shortcut}
+          </kbd>
+          {isDrawingActive && (
+            <>
+              <span className="text-[#4F5C67] tabular-nums">
+                {effectiveWidthPx}px · {lineStyle}
+              </span>
+              <button
+                type="button"
+                data-testid="drawing-stop-inline-btn"
+                onClick={stopDrawing}
+                className="ml-0.5 inline-flex items-center gap-1 rounded-md border border-[#B42318]/40 bg-[#FEF3F2] px-2 py-0.5 text-[11px] font-semibold text-[#B42318] hover:bg-[#FEE4E2]"
+              >
+                <Ban className="h-3 w-3" aria-hidden="true" />
+                Stop drawing
+              </button>
+            </>
+          )}
+        </div>
+
+        {/* Visible Selected Annotation Bar with Delete action */}
+        {selectedAnnotation && !isDrawingActive && (
           <div
-            data-testid="active-drawing-indicator"
-            className="flex items-center gap-2 rounded-xl border border-[#D9DEE2] bg-white/95 px-3 py-1.5 text-[12px] shadow-sm backdrop-blur"
+            data-testid="selected-annotation-bar"
+            role="status"
+            className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-600/40 bg-zinc-950 px-3 py-1.5 text-[12px] text-white shadow-md"
           >
             <span
-              className="h-2.5 w-2.5 shrink-0 rounded-full"
-              style={{ backgroundColor: colorHex }}
+              className="h-2.5 w-2.5 shrink-0 rounded-full ring-2 ring-emerald-400"
+              style={{ backgroundColor: selectedAnnotation.colorHex }}
               aria-hidden="true"
             />
-            <span className="font-semibold text-[#1B2A4A]">
-              {toolLabel(activeTool, deleteMode)}
-            </span>
-            <span className="text-[#4F5C67] tabular-nums">
-              {effectiveWidthPx}px · {lineStyle}
+            <span className="font-medium text-emerald-300">Selected:</span>
+            <span data-testid="selected-annotation-summary" className="font-semibold text-white">
+              {formatAnnotationDisplaySummary(selectedAnnotation)}
             </span>
             <button
               type="button"
-              data-testid="drawing-stop-inline-btn"
-              onClick={stopDrawing}
-              className="ml-1 inline-flex items-center gap-1 rounded-md border border-[#B42318]/40 bg-[#FEF3F2] px-2 py-0.5 text-[11px] font-semibold text-[#B42318] hover:bg-[#FEE4E2]"
+              data-testid="drawing-delete-selected-btn"
+              onClick={() => onDeleteSelectedAnnotation?.()}
+              className="ml-1 inline-flex items-center gap-1 rounded-lg bg-[#B42318] px-2.5 py-1 text-[11px] font-semibold text-white transition-colors hover:bg-[#912018] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400"
             >
-              <Ban className="h-3 w-3" aria-hidden="true" />
-              Stop drawing
+              <Trash2 className="h-3 w-3" aria-hidden="true" />
+              Delete
+              <kbd className="ml-0.5 rounded bg-white/15 px-1 font-mono text-[10px]">Del</kbd>
+            </button>
+            <button
+              type="button"
+              data-testid="drawing-deselect-btn"
+              onClick={() => onDeselectAnnotation?.()}
+              aria-label="Deselect mark"
+              title="Deselect mark (Esc)"
+              className="inline-flex h-6 w-6 items-center justify-center rounded-md text-zinc-400 hover:bg-zinc-800 hover:text-white"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
           </div>
         )}
 
-        {/* Group Popover Panel */}
+        {/* Group Flyout Popover Panel */}
         {openGroup && (
           <div
             data-testid={`drawing-popover-${openGroup}`}
             role="dialog"
             aria-label={`${openGroup} tools`}
-            className="max-h-[calc(100dvh-180px)] w-[min(290px,calc(100vw-88px))] overflow-y-auto rounded-xl border border-[#D9DEE2] bg-white p-3 shadow-lg"
+            className="max-h-[calc(100dvh-190px)] w-[min(290px,calc(100vw-88px))] overflow-y-auto rounded-xl border border-[#D9DEE2] bg-white p-3 shadow-lg"
           >
             <div className="mb-2 flex items-center justify-between border-b border-[#D9DEE2] pb-2">
               <span className="text-[12px] font-semibold uppercase tracking-wide text-[#4F5C67]">
                 {openGroup === 'cursor'
-                  ? 'Cursor & navigation'
+                  ? 'Cursor & selection'
                   : openGroup === 'freehand'
                   ? 'Freehand tools'
                   : openGroup === 'rulers'
@@ -447,7 +626,7 @@ export function WorkspaceDrawingToolbar({
                   : openGroup === 'edit'
                   ? 'Edit & private fill'
                   : openGroup === 'stroke'
-                  ? 'Stroke width & style'
+                  ? 'Line width & style'
                   : 'Drawing color'}
               </span>
               <button
@@ -468,38 +647,52 @@ export function WorkspaceDrawingToolbar({
                   data-testid="drawing-tool-cursor"
                   aria-pressed={!isDrawingActive}
                   onClick={stopDrawing}
-                  className={`flex min-h-[38px] w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-[13px] font-medium ${
+                  className={`flex min-h-[38px] w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-[13px] font-medium ${
                     !isDrawingActive
                       ? 'border-[#1B2A4A] bg-[#1B2A4A] text-white'
                       : 'border-[#D9DEE2] bg-white text-[#1B2A4A] hover:bg-[#F4F3EF]'
                   }`}
                 >
-                  <MousePointer2 className="h-4 w-4 shrink-0" aria-hidden="true" />
-                  <div>
-                    <div>Cursor (Orbit & inspect)</div>
-                    <div
-                      className={`text-[11px] ${
-                        !isDrawingActive ? 'text-white/80' : 'text-[#4F5C67]'
-                      }`}
-                    >
-                      Orbit 3D view, select Pins and elements
+                  <div className="flex items-center gap-2">
+                    <MousePointer2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <div>
+                      <div>Cursor (Orbit & select)</div>
+                      <div
+                        className={`text-[11px] ${
+                          !isDrawingActive ? 'text-white/80' : 'text-[#4F5C67]'
+                        }`}
+                      >
+                        Drag to orbit · Click own marks, Pins, or walls
+                      </div>
                     </div>
                   </div>
+                  <kbd
+                    className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold ${
+                      !isDrawingActive ? 'bg-white/15 text-white' : 'bg-[#F4F3EF] text-[#1B2A4A]'
+                    }`}
+                  >
+                    V
+                  </kbd>
                 </button>
 
                 <button
                   type="button"
                   data-testid="drawing-stop-popover-btn"
                   onClick={stopDrawing}
-                  className="flex min-h-[38px] w-full items-center gap-2 rounded-lg border border-[#B42318]/40 bg-[#FEF3F2] px-3 py-2 text-left text-[13px] font-semibold text-[#B42318] hover:bg-[#FEE4E2]"
+                  className="flex min-h-[38px] w-full items-center justify-between gap-2 rounded-lg border border-[#B42318]/40 bg-[#FEF3F2] px-3 py-2 text-left text-[13px] font-semibold text-[#B42318] hover:bg-[#FEE4E2]"
                 >
-                  <Ban className="h-4 w-4 shrink-0" aria-hidden="true" />
-                  <div>
-                    <div>Stop drawing</div>
-                    <div className="text-[11px] font-normal text-[#B42318]/85">
-                      Exit any drawing or measurement tool (Esc)
+                  <div className="flex items-center gap-2">
+                    <Ban className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <div>
+                      <div>Stop drawing</div>
+                      <div className="text-[11px] font-normal text-[#B42318]/85">
+                        Exit any drawing or measurement tool
+                      </div>
                     </div>
                   </div>
+                  <kbd className="rounded bg-[#B42318]/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[#B42318]">
+                    Esc
+                  </kbd>
                 </button>
               </div>
             )}
@@ -517,21 +710,30 @@ export function WorkspaceDrawingToolbar({
                       data-testid={`drawing-tool-${item.id}`}
                       aria-pressed={active}
                       onClick={() => handleChooseTool(item.id)}
-                      className={`flex min-h-[38px] w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left text-[13px] font-medium transition-colors ${
+                      className={`flex min-h-[38px] w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-[13px] font-medium transition-colors ${
                         active
                           ? 'border-[#1B2A4A] bg-[#1B2A4A] text-white'
                           : 'border-[#D9DEE2] bg-white text-[#1B2A4A] hover:bg-[#F4F3EF]'
                       }`}
                     >
-                      <Icon className="h-4 w-4 shrink-0" />
-                      <div>
-                        <div>{item.label}</div>
-                        <div
-                          className={`text-[11px] ${active ? 'text-white/80' : 'text-[#4F5C67]'}`}
-                        >
-                          {item.hint}
+                      <div className="flex items-center gap-2.5">
+                        <Icon className="h-4 w-4 shrink-0" />
+                        <div>
+                          <div>{item.label}</div>
+                          <div
+                            className={`text-[11px] ${active ? 'text-white/80' : 'text-[#4F5C67]'}`}
+                          >
+                            {item.hint}
+                          </div>
                         </div>
                       </div>
+                      <kbd
+                        className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold ${
+                          active ? 'bg-white/15 text-white' : 'bg-[#F4F3EF] text-[#1B2A4A]'
+                        }`}
+                      >
+                        {item.shortcut}
+                      </kbd>
                     </button>
                   );
                 })}
@@ -566,21 +768,32 @@ export function WorkspaceDrawingToolbar({
                         data-testid={`drawing-tool-${item.id}`}
                         aria-pressed={active}
                         onClick={() => handleChooseTool(item.id)}
-                        className={`flex min-h-[38px] w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left text-[13px] font-medium transition-colors ${
+                        className={`flex min-h-[38px] w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-[13px] font-medium transition-colors ${
                           active
                             ? 'border-[#1B2A4A] bg-[#1B2A4A] text-white'
                             : 'border-[#D9DEE2] bg-white text-[#1B2A4A] hover:bg-[#F4F3EF]'
                         }`}
                       >
-                        <Icon className="h-4 w-4 shrink-0" />
-                        <div>
-                          <div>{item.label}</div>
-                          <div
-                            className={`text-[11px] ${active ? 'text-white/80' : 'text-[#4F5C67]'}`}
-                          >
-                            {item.hint}
+                        <div className="flex items-center gap-2.5">
+                          <Icon className="h-4 w-4 shrink-0" />
+                          <div>
+                            <div>{item.label}</div>
+                            <div
+                              className={`text-[11px] ${
+                                active ? 'text-white/80' : 'text-[#4F5C67]'
+                              }`}
+                            >
+                              {item.hint}
+                            </div>
                           </div>
                         </div>
+                        <kbd
+                          className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold ${
+                            active ? 'bg-white/15 text-white' : 'bg-[#F4F3EF] text-[#1B2A4A]'
+                          }`}
+                        >
+                          {item.shortcut}
+                        </kbd>
                       </button>
                     );
                   })}
@@ -590,28 +803,36 @@ export function WorkspaceDrawingToolbar({
 
             {/* 4. SHAPES GROUP */}
             {openGroup === 'shapes' && (
-              <div className="grid grid-cols-2 gap-1.5">
-                {SHAPE_TOOLS.map((item) => {
-                  const Icon = item.icon;
-                  const active = activeTool === item.id && !deleteMode;
-                  return (
-                    <button
-                      key={item.id}
-                      type="button"
-                      data-testid={`drawing-tool-${item.id}`}
-                      aria-pressed={active}
-                      onClick={() => handleChooseTool(item.id)}
-                      className={`flex min-h-[38px] items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-[13px] font-medium transition-colors ${
-                        active
-                          ? 'border-[#1B2A4A] bg-[#1B2A4A] text-white'
-                          : 'border-[#D9DEE2] bg-white text-[#1B2A4A] hover:bg-[#F4F3EF]'
-                      }`}
-                    >
-                      <Icon className="h-4 w-4 shrink-0" />
-                      <span>{item.label}</span>
-                    </button>
-                  );
-                })}
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-1.5">
+                  {SHAPE_TOOLS.map((item) => {
+                    const Icon = item.icon;
+                    const active = activeTool === item.id && !deleteMode;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        data-testid={`drawing-tool-${item.id}`}
+                        aria-pressed={active}
+                        onClick={() => handleChooseTool(item.id)}
+                        className={`flex min-h-[38px] items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-[13px] font-medium transition-colors ${
+                          active
+                            ? 'border-[#1B2A4A] bg-[#1B2A4A] text-white'
+                            : 'border-[#D9DEE2] bg-white text-[#1B2A4A] hover:bg-[#F4F3EF]'
+                        }`}
+                      >
+                        <Icon className="h-4 w-4 shrink-0" />
+                        <span>{item.label}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-[#4F5C67]">
+                  <span>Cycle shapes shortcut</span>
+                  <kbd className="rounded bg-[#F4F3EF] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[#1B2A4A]">
+                    U
+                  </kbd>
+                </div>
               </div>
             )}
 
@@ -629,23 +850,36 @@ export function WorkspaceDrawingToolbar({
                     onSelectTool('eraser');
                     setOpenGroup(null);
                   }}
-                  className={`flex min-h-[38px] w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left text-[13px] font-medium ${
+                  className={`flex min-h-[38px] w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-[13px] font-medium ${
                     deleteMode || activeTool === 'eraser'
                       ? 'border-[#B42318] bg-[#B42318] text-white'
                       : 'border-[#D9DEE2] bg-white text-[#1B2A4A] hover:bg-[#F4F3EF]'
                   }`}
                 >
-                  <Eraser className="h-4 w-4 shrink-0" aria-hidden="true" />
-                  <div>
-                    <div>Eraser</div>
-                    <div
-                      className={`text-[11px] ${
-                        deleteMode || activeTool === 'eraser' ? 'text-white/80' : 'text-[#4F5C67]'
-                      }`}
-                    >
-                      Click any of your local marks or wall fills to delete
+                  <div className="flex items-center gap-2.5">
+                    <Eraser className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <div>
+                      <div>Eraser</div>
+                      <div
+                        className={`text-[11px] ${
+                          deleteMode || activeTool === 'eraser'
+                            ? 'text-white/80'
+                            : 'text-[#4F5C67]'
+                        }`}
+                      >
+                        Click an own mark to remove · Misses protect walls & Pins
+                      </div>
                     </div>
                   </div>
+                  <kbd
+                    className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold ${
+                      deleteMode || activeTool === 'eraser'
+                        ? 'bg-white/15 text-white'
+                        : 'bg-[#F4F3EF] text-[#1B2A4A]'
+                    }`}
+                  >
+                    E
+                  </kbd>
                 </button>
 
                 <button
@@ -653,25 +887,36 @@ export function WorkspaceDrawingToolbar({
                   data-testid="drawing-tool-wall_fill"
                   aria-pressed={activeTool === 'wall_fill' && !deleteMode}
                   onClick={() => handleChooseTool('wall_fill')}
-                  className={`flex min-h-[38px] w-full items-center gap-2.5 rounded-lg border px-3 py-2 text-left text-[13px] font-medium ${
+                  className={`flex min-h-[38px] w-full items-center justify-between gap-2 rounded-lg border px-3 py-2 text-left text-[13px] font-medium ${
                     activeTool === 'wall_fill' && !deleteMode
                       ? 'border-[#1B2A4A] bg-[#1B2A4A] text-white'
                       : 'border-[#D9DEE2] bg-white text-[#1B2A4A] hover:bg-[#F4F3EF]'
                   }`}
                 >
-                  <PaintBucket className="h-4 w-4 shrink-0" aria-hidden="true" />
-                  <div>
-                    <div>Fill wall (private)</div>
-                    <div
-                      className={`text-[11px] ${
-                        activeTool === 'wall_fill' && !deleteMode
-                          ? 'text-white/80'
-                          : 'text-[#4F5C67]'
-                      }`}
-                    >
-                      Tint one selected wall locally without changing shared materials
+                  <div className="flex items-center gap-2.5">
+                    <PaintBucket className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <div>
+                      <div>Fill wall (private)</div>
+                      <div
+                        className={`text-[11px] ${
+                          activeTool === 'wall_fill' && !deleteMode
+                            ? 'text-white/80'
+                            : 'text-[#4F5C67]'
+                        }`}
+                      >
+                        Tint one selected wall locally without changing shared materials
+                      </div>
                     </div>
                   </div>
+                  <kbd
+                    className={`rounded px-1.5 py-0.5 font-mono text-[10px] font-semibold ${
+                      activeTool === 'wall_fill' && !deleteMode
+                        ? 'bg-white/15 text-white'
+                        : 'bg-[#F4F3EF] text-[#1B2A4A]'
+                    }`}
+                  >
+                    G
+                  </kbd>
                 </button>
 
                 <div className="border-t border-[#D9DEE2] pt-2">

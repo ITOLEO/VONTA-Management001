@@ -1,10 +1,11 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle,
   BarChart3,
   ChevronLeft,
   ChevronRight,
+  Info,
   LineChart,
   Plus,
   Receipt,
@@ -12,6 +13,7 @@ import {
 } from 'lucide-react';
 import type { ProjectDepartment } from '../domain/departmentCatalog';
 import {
+  computeBudgetUsageSeriesPoint,
   computeDepartmentBudgetSummary,
   formatCompactCurrency,
   formatCurrencyAmount,
@@ -32,6 +34,14 @@ export interface BudgetDashboardSectionProps {
   };
   defaultSelectedDate?: string;
   projectTimezone?: string;
+  /** Optional truthful notice shown when a live signed-in backend ledger integration is not yet connected */
+  liveSourceNotice?: string;
+}
+
+function getRingBalanceTextClass(formatted: string): string {
+  if (formatted.length <= 8) return 'text-[20px] leading-[24px]';
+  if (formatted.length <= 11) return 'text-[17px] leading-[22px]';
+  return 'text-[14px] leading-[18px]';
 }
 
 const DEFAULT_NEW_DEPT_COLORS = ['#0B63CE', '#D4652F', '#15803D', '#6D28D9', '#B45309', '#0F766E'];
@@ -58,12 +68,18 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
   onAddDepartment,
   defaultSelectedDate = '2026-11-20',
   projectTimezone = 'Asia/Makassar',
+  liveSourceNotice,
 }) => {
   // Carousel controls (NO department filter!)
   const [allocPeriod, setAllocPeriod] = useState<BudgetPeriodMode>('month');
   const [allocDate, setAllocDate] = useState<string>(defaultSelectedDate);
   const [allocMode, setAllocMode] = useState<'amount' | 'percent'>('amount');
   const carouselRef = useRef<HTMLDivElement | null>(null);
+  const prevBtnRef = useRef<HTMLButtonElement | null>(null);
+  const nextBtnRef = useRef<HTMLButtonElement | null>(null);
+  const [canScrollPrev, setCanScrollPrev] = useState(false);
+  const [canScrollNext, setCanScrollNext] = useState(false);
+  const [hasCarouselOverflow, setHasCarouselOverflow] = useState(false);
 
   // Add department modal state
   const [addDeptOpen, setAddDeptOpen] = useState(false);
@@ -71,8 +87,56 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
   const [newDeptColor, setNewDeptColor] = useState(DEFAULT_NEW_DEPT_COLORS[0]);
   const [addDeptError, setAddDeptError] = useState<string | null>(null);
 
-  // Dated transaction drawer
+  // Dated transaction drawer (modal right-side overlay with preserved modal focus behavior)
   const [drawerDeptId, setDrawerDeptId] = useState<string | null>(null);
+  const drawerPanelRef = useRef<HTMLDivElement | null>(null);
+  const drawerCloseBtnRef = useRef<HTMLButtonElement | null>(null);
+  const drawerOpenerRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!drawerDeptId) return;
+    drawerOpenerRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
+    const raf = window.requestAnimationFrame(() => {
+      drawerCloseBtnRef.current?.focus({ preventScroll: true });
+    });
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setDrawerDeptId(null);
+        return;
+      }
+      if (e.key === 'Tab' && drawerPanelRef.current) {
+        const focusable = Array.from(
+          drawerPanelRef.current.querySelectorAll<HTMLElement>(
+            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )
+        );
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener('keydown', onKeyDown);
+      const opener = drawerOpenerRef.current;
+      if (opener && opener.isConnected) {
+        window.requestAnimationFrame(() => opener.focus({ preventScroll: true }));
+      }
+    };
+  }, [drawerDeptId]);
 
   // Usage chart independent controls
   const [chartType, setChartType] = useState<'line' | 'bar'>('line');
@@ -113,11 +177,98 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
     [carouselSummaries, drawerDeptId]
   );
 
-  const scrollCarousel = (direction: -1 | 1) => {
+  const measureCarousel = useCallback(() => {
+    const el = carouselRef.current;
+    if (!el) {
+      setCanScrollPrev(false);
+      setCanScrollNext(false);
+      setHasCarouselOverflow(false);
+      return;
+    }
+    const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth);
+    const overflow = maxScroll > 4;
+    setHasCarouselOverflow(overflow);
+    setCanScrollPrev(overflow && el.scrollLeft > 4);
+    setCanScrollNext(overflow && el.scrollLeft < maxScroll - 4);
+  }, []);
+
+  useEffect(() => {
     const el = carouselRef.current;
     if (!el) return;
-    const step = Math.max(280, Math.floor(el.clientWidth * 0.85));
-    el.scrollBy({ left: direction * step, behavior: 'smooth' });
+    measureCarousel();
+    const onScroll = () => measureCarousel();
+    el.addEventListener('scroll', onScroll, { passive: true });
+    let ro: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => measureCarousel());
+      ro.observe(el);
+    }
+    window.addEventListener('resize', measureCarousel);
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      window.removeEventListener('resize', measureCarousel);
+      ro?.disconnect();
+    };
+  }, [measureCarousel, departments.length]);
+
+  const scrollCarousel = useCallback(
+    (direction: -1 | 1) => {
+      const el = carouselRef.current;
+      if (!el) return;
+      const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth);
+      if (maxScroll <= 4) return;
+      const firstCard = el.firstElementChild as HTMLElement | null;
+      const stride = firstCard
+        ? firstCard.getBoundingClientRect().width + 16
+        : Math.max(280, Math.floor(el.clientWidth * 0.85));
+      const currentIdx = Math.round(el.scrollLeft / stride);
+      const maxIdx = Math.max(1, Math.round(maxScroll / stride));
+      const nextIdx = Math.max(0, Math.min(maxIdx, currentIdx + direction));
+      const targetLeft =
+        nextIdx >= maxIdx ? maxScroll : Math.max(0, Math.min(maxScroll, Math.round(nextIdx * stride)));
+      const prefersReducedMotion =
+        typeof window !== 'undefined' &&
+        window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      el.scrollTo({
+        left: targetLeft,
+        behavior: prefersReducedMotion ? 'auto' : 'smooth',
+      });
+
+      const willHitStart = targetLeft <= 4;
+      const willHitEnd = targetLeft >= maxScroll - 4;
+      setCanScrollPrev(!willHitStart);
+      setCanScrollNext(!willHitEnd);
+      const activeEl = document.activeElement;
+      if (direction === 1 && willHitEnd && activeEl === nextBtnRef.current) {
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => prevBtnRef.current?.focus({ preventScroll: true }));
+        });
+      } else if (direction === -1 && willHitStart && activeEl === prevBtnRef.current) {
+        window.requestAnimationFrame(() => {
+          window.requestAnimationFrame(() => nextBtnRef.current?.focus({ preventScroll: true }));
+        });
+      }
+
+      window.setTimeout(measureCarousel, 420);
+    },
+    [measureCarousel]
+  );
+
+  const handleCarouselKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement | null;
+    if (
+      target &&
+      (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')
+    ) {
+      return;
+    }
+    if (e.key === 'ArrowRight' && canScrollNext) {
+      e.preventDefault();
+      scrollCarousel(1);
+    } else if (e.key === 'ArrowLeft' && canScrollPrev) {
+      e.preventDefault();
+      scrollCarousel(-1);
+    }
   };
 
   const handleAddDepartmentSubmit = (e: React.FormEvent) => {
@@ -131,13 +282,19 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
     setAddDeptError(null);
     setNewDeptName('');
     setAddDeptOpen(false);
-    // Smoothly scroll carousel to the end so the newly created department card is visible
-    setTimeout(() => {
-      carouselRef.current?.scrollTo({
-        left: carouselRef.current.scrollWidth,
-        behavior: 'smooth',
+    // Scroll carousel flush to the end so the newly created department card is fully visible
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const el = carouselRef.current;
+        if (!el) return;
+        const maxScroll = Math.max(0, el.scrollWidth - el.clientWidth);
+        el.scrollTo({
+          left: maxScroll,
+          behavior: 'auto',
+        });
+        measureCarousel();
       });
-    }, 60);
+    });
   };
 
   // Usage Chart SVG geometry
@@ -187,22 +344,22 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
         data-testid="budget-allocation-carousel-section"
         className="rounded-xl border border-[#D9DEE2] bg-white p-5 lg:p-6 space-y-4"
       >
-        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#E6E8EB] pb-4">
-          <div>
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#E6E8EB] pb-4 xl:flex-nowrap xl:items-center">
+          <div className="min-w-0 flex-1">
             <h2
               id="budget-allocation-heading"
-              className="text-[18px] leading-[24px] font-semibold text-[#1B2A4A]"
+              className="vonta-section-title text-[#1B2A4A]"
             >
               Department Budget Allocation
             </h2>
             <p className="mt-0.5 text-[13px] leading-[18px] text-[#4F5C67]">
-              Posted monthly budgets across all {departments.length} project departments (
-              {ledger.currency} · {projectTimezone}). Click any card to inspect dated spend.
+              Posted budgets across {departments.length} departments ({ledger.currency} ·{' '}
+              {projectTimezone}). Click any card for dated spend.
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Period Granularity */}
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+            {/* Period Granularity (applies to all departments) */}
             <div
               role="group"
               aria-label="Budget allocation period"
@@ -256,6 +413,8 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
               </button>
               <button
                 type="button"
+                aria-label="Show percentages"
+                title="Show percentages"
                 aria-pressed={allocMode === 'percent'}
                 onClick={() => setAllocMode('percent')}
                 className={`rounded-md px-2.5 py-1 text-[12px] font-semibold transition-colors ${
@@ -264,29 +423,7 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
                     : 'text-[#4F5C67] hover:text-[#1B2A4A]'
                 }`}
               >
-                Percent
-              </button>
-            </div>
-
-            {/* Carousel Prev / Next */}
-            <div className="inline-flex items-center gap-1">
-              <button
-                type="button"
-                aria-label="Previous departments"
-                data-testid="budget-carousel-prev"
-                onClick={() => scrollCarousel(-1)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#D9DEE2] bg-white text-[#1B2A4A] hover:bg-[#F4F3EF]"
-              >
-                <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-              </button>
-              <button
-                type="button"
-                aria-label="Next departments"
-                data-testid="budget-carousel-next"
-                onClick={() => scrollCarousel(1)}
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-[#D9DEE2] bg-white text-[#1B2A4A] hover:bg-[#F4F3EF]"
-              >
-                <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                <span aria-hidden="true">%</span>
               </button>
             </div>
 
@@ -298,7 +435,7 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
                   setAddDeptError(null);
                   setAddDeptOpen(true);
                 }}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[#1B2A4A] px-3 text-[12px] font-semibold text-white hover:bg-[#1B2A4A]/90"
+                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-[#1B2A4A] px-3 text-[12px] font-semibold text-white transition-colors hover:bg-[#1B2A4A]/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE]"
               >
                 <Plus className="h-3.5 w-3.5" aria-hidden="true" />
                 Add department
@@ -306,6 +443,17 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
             )}
           </div>
         </div>
+
+        {liveSourceNotice && (
+          <div
+            role="status"
+            data-testid="budget-live-source-notice"
+            className="flex items-start gap-2 rounded-lg border border-[#D9DEE2] bg-[#FAF9F6] px-3.5 py-2.5 text-[12px] leading-[17px] text-[#4F5C67]"
+          >
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-[#4F5C67]" aria-hidden="true" />
+            <span>{liveSourceNotice}</span>
+          </div>
+        )}
 
         {/* Inline Add Department Form */}
         {addDeptOpen && (
@@ -377,151 +525,240 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
           </form>
         )}
 
-        {/* 3-Visible Equal-Sized Ring Card Carousel */}
+        {/* 3-Visible Equal-Sized Ring Card Carousel with Large Quiet Inset Prev/Next Arrows */}
         <div
-          ref={carouselRef}
-          data-testid="budget-cards-carousel"
-          className="grid grid-flow-col auto-cols-[100%] sm:auto-cols-[calc((100%-16px)/2)] lg:auto-cols-[calc((100%-32px)/3)] gap-4 overflow-x-auto pb-2 snap-x snap-mandatory"
+          role="region"
+          aria-roledescription="carousel"
+          aria-label="Department budget allocation cards"
+          onKeyDown={handleCarouselKeyDown}
+          className="relative"
         >
-          {carouselSummaries.map((item) => {
-            const deptMeta = departments.find((d) => d.id === item.departmentId);
-            const r = 46;
-            const c = 2 * Math.PI * r;
-            const usedArc = (item.ringUsedPercent / 100) * c;
-            const isUnallocated = item.allocationStatus === 'not_allocated';
+          {(hasCarouselOverflow || departments.length > 3) && (
+            <button
+              ref={prevBtnRef}
+              type="button"
+              aria-label="Previous departments"
+              title="Previous departments"
+              data-testid="budget-carousel-prev"
+              disabled={!canScrollPrev}
+              onClick={() => scrollCarousel(-1)}
+              className="absolute left-2 top-[176px] z-10 inline-flex h-12 w-11 sm:w-12 -translate-y-1/2 items-center justify-center rounded-full border border-[#D9DEE2] bg-white/92 text-[#1B2A4A] shadow-sm backdrop-blur-[2px] transition-all hover:border-[#1B2A4A]/40 hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE] disabled:cursor-not-allowed disabled:border-[#E6E8EB] disabled:bg-[#F4F3EF]/85 disabled:text-[#94A3B8] disabled:opacity-35 disabled:shadow-none"
+            >
+              <ChevronLeft className="h-6 w-6" aria-hidden="true" />
+            </button>
+          )}
 
-            return (
-              <button
-                key={item.departmentId}
-                type="button"
-                data-testid={`budget-card-${deptMeta?.slug ?? item.departmentId}`}
-                onClick={() => setDrawerDeptId(item.departmentId)}
-                className="snap-start flex flex-col justify-between rounded-xl border border-[#D9DEE2] bg-[#FAF9F6] p-4 text-left transition-colors hover:border-[#A64011] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE]"
-              >
-                <div className="flex w-full items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="h-2.5 w-2.5 shrink-0 rounded-full"
-                        style={{ backgroundColor: deptMeta?.defaultPinColor ?? '#1B2A4A' }}
-                        aria-hidden="true"
-                      />
-                      <span className="truncate text-[15px] font-semibold text-[#1B2A4A]">
-                        {item.departmentName}
-                      </span>
+          <div
+            ref={carouselRef}
+            data-testid="budget-cards-carousel"
+            className="grid grid-flow-col auto-cols-[100%] sm:auto-cols-[calc((100%-16px)/2)] lg:auto-cols-[calc((100%-32px)/3)] gap-4 overflow-x-auto pb-2 snap-x snap-mandatory touch-pan-x"
+          >
+            {carouselSummaries.map((item) => {
+              const deptMeta = departments.find((d) => d.id === item.departmentId);
+              const r = 76;
+              const c = 2 * Math.PI * r;
+              const usedArc = (item.ringUsedPercent / 100) * c;
+              const isUnallocated = item.allocationStatus === 'not_allocated';
+              const isExplicitZeroNoSpend =
+                item.allocationStatus === 'zero' && item.postedUsedAmount === 0;
+              const compactRemaining =
+                item.remainingAmount !== null
+                  ? formatCompactCurrency(item.remainingAmount, item.currency)
+                  : '—';
+              const exactRemaining =
+                item.remainingAmount !== null
+                  ? formatCurrencyAmount(item.remainingAmount, item.currency)
+                  : 'Not allocated';
+
+              return (
+                <button
+                  key={item.departmentId}
+                  type="button"
+                  data-testid={`budget-card-${deptMeta?.slug ?? item.departmentId}`}
+                  onClick={() => setDrawerDeptId(item.departmentId)}
+                  className="snap-start flex flex-col justify-between rounded-xl border border-[#D9DEE2] bg-[#FAF9F6] p-5 text-left transition-colors hover:border-[#A64011] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE]"
+                >
+                  <div className="flex w-full items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span
+                          className="h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: deptMeta?.defaultPinColor ?? '#1B2A4A' }}
+                          aria-hidden="true"
+                        />
+                        <span className="truncate text-[15px] font-semibold text-[#1B2A4A]">
+                          {item.departmentName}
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-[12px] text-[#4F5C67]">{item.periodLabel}</p>
                     </div>
-                    <p className="mt-0.5 text-[11px] text-[#4F5C67]">{item.periodLabel}</p>
+                    {item.isOverrun ? (
+                      <span className="inline-flex shrink-0 items-center gap-1 rounded bg-[#FEE4E2] px-2 py-0.5 text-[11px] font-semibold text-[#B42318]">
+                        <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                        Overrun
+                      </span>
+                    ) : isUnallocated ? (
+                      <span className="shrink-0 rounded bg-[#E6E8EB] px-2 py-0.5 text-[11px] font-medium text-[#4F5C67]">
+                        Not allocated
+                      </span>
+                    ) : null}
                   </div>
-                  {item.isOverrun ? (
-                    <span className="inline-flex shrink-0 items-center gap-1 rounded bg-[#FEE4E2] px-2 py-0.5 text-[11px] font-semibold text-[#B42318]">
-                      <AlertTriangle className="h-3 w-3" aria-hidden="true" />
-                      Overrun
-                    </span>
-                  ) : isUnallocated ? (
-                    <span className="shrink-0 rounded bg-[#E6E8EB] px-2 py-0.5 text-[11px] font-medium text-[#4F5C67]">
-                      Not allocated
-                    </span>
-                  ) : null}
-                </div>
 
-                {/* Red Used / Green Unused Ring */}
-                <div className="my-3 flex items-center justify-center">
-                  <div className="relative flex h-32 w-32 items-center justify-center">
-                    <svg viewBox="0 0 116 116" className="h-32 w-32 -rotate-90" aria-hidden="true">
-                      <circle
-                        cx="58"
-                        cy="58"
-                        r={r}
-                        fill="none"
-                        stroke={isUnallocated ? '#D9DEE2' : '#15803D'}
-                        strokeWidth="11"
-                      />
-                      {!isUnallocated && item.ringUsedPercent > 0 && (
+                  {/* 1.5x Scaled Ring (192 CSS px on desktop): Red Posted Use / Green Unspent Balance */}
+                  <div className="my-4 flex items-center justify-center">
+                    <div
+                      data-testid="budget-ring-wrapper"
+                      className="relative flex h-[168px] w-[168px] sm:h-[180px] sm:w-[180px] lg:h-[192px] lg:w-[192px] shrink-0 items-center justify-center"
+                    >
+                      <svg
+                        viewBox="0 0 192 192"
+                        data-testid="budget-ring-svg"
+                        className="h-full w-full -rotate-90"
+                        aria-hidden="true"
+                      >
                         <circle
-                          cx="58"
-                          cy="58"
+                          cx="96"
+                          cy="96"
                           r={r}
                           fill="none"
-                          stroke="#B42318"
-                          strokeWidth="11"
-                          strokeDasharray={`${usedArc} ${c}`}
+                          stroke={
+                            isUnallocated
+                              ? '#D9DEE2'
+                              : isExplicitZeroNoSpend
+                                ? '#CBD5E1'
+                                : '#15803D'
+                          }
+                          strokeWidth="18"
                         />
-                      )}
-                    </svg>
-                    <div className="absolute inset-0 flex flex-col items-center justify-center px-2 text-center tabular-nums">
-                      {isUnallocated ? (
-                        <span className="text-[12px] font-semibold text-[#4F5C67]">
-                          Not allocated
-                        </span>
-                      ) : allocMode === 'percent' ? (
-                        <>
-                          <span
-                            className={`text-[18px] font-bold ${
-                              item.isOverrun ? 'text-[#B42318]' : 'text-[#1B2A4A]'
-                            }`}
-                          >
-                            {item.actualUsedPercent !== null ? `${item.actualUsedPercent}%` : '—'}
-                          </span>
-                          <span className="text-[10px] text-[#4F5C67]">Used</span>
-                        </>
-                      ) : (
-                        <>
-                          <span
-                            className={`text-[14px] font-bold leading-tight ${
-                              item.isOverrun ? 'text-[#B42318]' : 'text-[#1B2A4A]'
-                            }`}
-                          >
-                            {item.remainingAmount !== null
-                              ? formatCompactCurrency(item.remainingAmount, item.currency)
-                              : '—'}
-                          </span>
-                          <span className="text-[10px] text-[#4F5C67]">
-                            {item.isOverrun ? 'Overrun' : 'Remaining'}
-                          </span>
-                        </>
-                      )}
+                        {!isUnallocated && item.ringUsedPercent > 0 && (
+                          <circle
+                            cx="96"
+                            cy="96"
+                            r={r}
+                            fill="none"
+                            stroke="#B42318"
+                            strokeWidth="18"
+                            strokeDasharray={`${usedArc} ${c}`}
+                          />
+                        )}
+                      </svg>
+                      <div className="absolute inset-0 flex flex-col items-center justify-center px-5 text-center tabular-nums">
+                        {isUnallocated ? (
+                          <>
+                            <span className="text-[13px] font-semibold text-[#4F5C67]">
+                              Not allocated
+                            </span>
+                            <span className="mt-1 text-[11px] text-[#64748B]">
+                              {formatCompactCurrency(item.postedUsedAmount, item.currency)} used
+                            </span>
+                          </>
+                        ) : allocMode === 'percent' ? (
+                          <>
+                            <span
+                              className={`text-[22px] font-bold leading-tight ${
+                                item.isOverrun ? 'text-[#B42318]' : 'text-[#1B2A4A]'
+                              }`}
+                            >
+                              {item.actualUsedPercent !== null ? `${item.actualUsedPercent}%` : '—'}
+                            </span>
+                            <span className="text-[11px] font-medium text-[#4F5C67]">Used</span>
+                            <span
+                              title={exactRemaining}
+                              className={`mt-1 max-w-[132px] break-words text-[12px] font-semibold leading-tight ${
+                                item.isOverrun ? 'text-[#B42318]' : 'text-[#15803D]'
+                              }`}
+                            >
+                              {compactRemaining}
+                            </span>
+                          </>
+                        ) : (
+                          <>
+                            <span
+                              title={exactRemaining}
+                              data-testid="budget-ring-balance"
+                              className={`max-w-[136px] break-words font-bold ${getRingBalanceTextClass(
+                                compactRemaining
+                              )} ${item.isOverrun ? 'text-[#B42318]' : 'text-[#1B2A4A]'}`}
+                            >
+                              {compactRemaining}
+                            </span>
+                            <span
+                              className={`mt-0.5 text-[12px] font-medium ${
+                                item.isOverrun ? 'text-[#B42318]' : 'text-[#4F5C67]'
+                              }`}
+                            >
+                              {item.isOverrun ? 'Overrun' : 'Remaining'}
+                            </span>
+                            {item.actualUsedPercent !== null && (
+                              <span className="mt-0.5 text-[11px] text-[#64748B]">
+                                {item.actualUsedPercent}% used
+                              </span>
+                            )}
+                          </>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                {/* Bottom Metrics */}
-                <dl className="w-full space-y-1 border-t border-[#E6E8EB] pt-2.5 text-[12px] tabular-nums">
-                  <div className="flex items-center justify-between gap-2">
-                    <dt className="text-[#4F5C67]">Allocated</dt>
-                    <dd className="font-semibold text-[#1B2A4A]">
-                      {item.allocatedAmount !== null
-                        ? formatCurrencyAmount(item.allocatedAmount, item.currency)
-                        : 'Not allocated'}
-                    </dd>
-                  </div>
-                  <div className="flex items-center justify-between gap-2">
-                    <dt className="inline-flex items-center gap-1 text-[#4F5C67]">
-                      <span className="h-2 w-2 rounded-full bg-[#B42318]" aria-hidden="true" />
-                      Posted used
-                    </dt>
-                    <dd className="font-semibold text-[#B42318]">
-                      {formatCurrencyAmount(item.postedUsedAmount, item.currency)}
-                    </dd>
-                  </div>
-                  {item.openCommitmentsAmount > 0 && item.availableToApproveAmount !== null && (
-                    <div className="flex items-center justify-between gap-2 text-[11px] text-[#4F5C67]">
-                      <dt>Available to approve</dt>
-                      <dd className="font-semibold text-[#1B2A4A]">
-                        {formatCurrencyAmount(item.availableToApproveAmount, item.currency)}
-                      </dd>
+                  {/* Bottom Metrics (clear of inset carousel arrows, consistent height across cards) */}
+                  <dl
+                    data-testid="budget-card-metrics"
+                    className="mt-auto flex min-h-[106px] w-full flex-col justify-between border-t border-[#E6E8EB] pt-3 text-[12px] tabular-nums"
+                  >
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <dt className="text-[#4F5C67]">Allocated</dt>
+                        <dd className="font-semibold text-[#1B2A4A]">
+                          {item.allocatedAmount !== null
+                            ? formatCurrencyAmount(item.allocatedAmount, item.currency)
+                            : 'Not allocated'}
+                        </dd>
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <dt className="inline-flex items-center gap-1.5 text-[#4F5C67]">
+                          <span className="h-2 w-2 rounded-full bg-[#B42318]" aria-hidden="true" />
+                          Posted used
+                        </dt>
+                        <dd className="font-semibold text-[#B42318]">
+                          {formatCurrencyAmount(item.postedUsedAmount, item.currency)}
+                        </dd>
+                      </div>
+                      {item.openCommitmentsAmount > 0 && item.availableToApproveAmount !== null && (
+                        <div className="flex items-center justify-between gap-2 text-[11px] text-[#4F5C67]">
+                          <dt>Available to approve</dt>
+                          <dd className="font-semibold text-[#1B2A4A]">
+                            {formatCurrencyAmount(item.availableToApproveAmount, item.currency)}
+                          </dd>
+                        </div>
+                      )}
                     </div>
-                  )}
-                  <div className="flex items-center justify-between pt-1 text-[11px] font-medium text-[#A64011]">
-                    <span>
-                      {item.transactions.length} posted transaction
-                      {item.transactions.length === 1 ? '' : 's'}
-                    </span>
-                    <span>Inspect dates →</span>
-                  </div>
-                </dl>
-              </button>
-            );
-          })}
+                    <div className="flex items-center justify-between pt-2 text-[11px] font-medium text-[#A64011]">
+                      <span>
+                        {item.transactions.length} posted transaction
+                        {item.transactions.length === 1 ? '' : 's'}
+                      </span>
+                      <span>Inspect dates →</span>
+                    </div>
+                  </dl>
+                </button>
+              );
+            })}
+          </div>
+
+          {(hasCarouselOverflow || departments.length > 3) && (
+            <button
+              ref={nextBtnRef}
+              type="button"
+              aria-label="Next departments"
+              title="Next departments"
+              data-testid="budget-carousel-next"
+              disabled={!canScrollNext}
+              onClick={() => scrollCarousel(1)}
+              className="absolute right-2 top-[176px] z-10 inline-flex h-12 w-11 sm:w-12 -translate-y-1/2 items-center justify-center rounded-full border border-[#D9DEE2] bg-white/92 text-[#1B2A4A] shadow-sm backdrop-blur-[2px] transition-all hover:border-[#1B2A4A]/40 hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE] disabled:cursor-not-allowed disabled:border-[#E6E8EB] disabled:bg-[#F4F3EF]/85 disabled:text-[#94A3B8] disabled:opacity-35 disabled:shadow-none"
+            >
+              <ChevronRight className="h-6 w-6" aria-hidden="true" />
+            </button>
+          )}
         </div>
       </section>
 
@@ -535,7 +772,7 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
           <div>
             <h2
               id="budget-usage-chart-heading"
-              className="text-[18px] leading-[24px] font-semibold text-[#1B2A4A]"
+              className="vonta-section-title text-[#1B2A4A]"
             >
               Budget Usage Comparison
             </h2>
@@ -614,15 +851,17 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
               </button>
               <button
                 type="button"
+                aria-label="Show percentages"
+                title="Show percentages"
                 aria-pressed={chartMode === 'percent'}
                 onClick={() => setChartMode('percent')}
-                className={`rounded-md px-2 py-1 text-[12px] font-semibold ${
+                className={`rounded-md px-2.5 py-1 text-[12px] font-semibold ${
                   chartMode === 'percent'
                     ? 'bg-[#1B2A4A] text-white'
                     : 'text-[#4F5C67] hover:text-[#1B2A4A]'
                 }`}
               >
-                Percent
+                <span aria-hidden="true">%</span>
               </button>
             </div>
 
@@ -749,13 +988,8 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
                       strokeLinejoin="round"
                       points={chartSummaries
                         .map((s, idx) => {
-                          const v =
-                            chartMode === 'percent'
-                              ? s.allocatedAmount !== null
-                                ? 100
-                                : 0
-                              : s.allocatedAmount ?? 0;
-                          return `${getChartX(idx).toFixed(1)},${getChartY(v).toFixed(1)}`;
+                          const pt = computeBudgetUsageSeriesPoint(s, chartMode);
+                          return `${getChartX(idx).toFixed(1)},${getChartY(pt.allocatedValue).toFixed(1)}`;
                         })
                         .join(' ')}
                     />
@@ -770,11 +1004,8 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
                       strokeLinejoin="round"
                       points={chartSummaries
                         .map((s, idx) => {
-                          const v =
-                            chartMode === 'percent'
-                              ? s.actualUsedPercent ?? 0
-                              : s.postedUsedAmount;
-                          return `${getChartX(idx).toFixed(1)},${getChartY(v).toFixed(1)}`;
+                          const pt = computeBudgetUsageSeriesPoint(s, chartMode);
+                          return `${getChartX(idx).toFixed(1)},${getChartY(pt.usedValue).toFixed(1)}`;
                         })
                         .join(' ')}
                     />
@@ -783,14 +1014,7 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
                   {/* Interactive Points & Labels */}
                   {chartSummaries.map((s, idx) => {
                     const cx = getChartX(idx);
-                    const allocVal =
-                      chartMode === 'percent'
-                        ? s.allocatedAmount !== null
-                          ? 100
-                          : 0
-                        : s.allocatedAmount ?? 0;
-                    const usedVal =
-                      chartMode === 'percent' ? s.actualUsedPercent ?? 0 : s.postedUsedAmount;
+                    const pt = computeBudgetUsageSeriesPoint(s, chartMode);
                     return (
                       <g
                         key={s.departmentId}
@@ -802,7 +1026,7 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
                       >
                         <circle
                           cx={cx}
-                          cy={getChartY(allocVal)}
+                          cy={getChartY(pt.allocatedValue)}
                           r="4.5"
                           fill="#1B2A4A"
                           stroke="#FFFFFF"
@@ -810,7 +1034,7 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
                         />
                         <circle
                           cx={cx}
-                          cy={getChartY(usedVal)}
+                          cy={getChartY(pt.usedValue)}
                           r="4.5"
                           fill="#B42318"
                           stroke="#FFFFFF"
@@ -836,17 +1060,12 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
                   const groupW = plotW / Math.max(1, chartSummaries.length);
                   const centerX = padL + groupW * idx + groupW / 2;
                   const barW = Math.min(28, Math.max(14, groupW * 0.25));
-                  const allocVal =
-                    chartMode === 'percent'
-                      ? s.allocatedAmount !== null
-                        ? 100
-                        : 0
-                      : s.allocatedAmount ?? 0;
-                  const usedVal =
-                    chartMode === 'percent' ? s.actualUsedPercent ?? 0 : s.postedUsedAmount;
-                  const allocY = getChartY(allocVal);
-                  const usedY = getChartY(usedVal);
+                  const pt = computeBudgetUsageSeriesPoint(s, chartMode);
+                  const allocY = getChartY(pt.allocatedValue);
+                  const usedY = getChartY(pt.usedValue);
                   const baseY = padT + plotH;
+                  const allocH = pt.allocatedValue <= 0 ? 0 : Math.max(2, baseY - allocY);
+                  const usedH = pt.usedValue <= 0 ? 0 : Math.max(2, baseY - usedY);
 
                   return (
                     <g
@@ -859,17 +1078,17 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
                     >
                       <rect
                         x={centerX - barW - 3}
-                        y={allocY}
+                        y={allocH === 0 ? baseY : allocY}
                         width={barW}
-                        height={Math.max(2, baseY - allocY)}
+                        height={allocH}
                         rx="3"
                         fill="#1B2A4A"
                       />
                       <rect
                         x={centerX + 3}
-                        y={usedY}
+                        y={usedH === 0 ? baseY : usedY}
                         width={barW}
-                        height={Math.max(2, baseY - usedY)}
+                        height={usedH}
                         rx="3"
                         fill="#B42318"
                       />
@@ -918,7 +1137,10 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
             if (e.target === e.currentTarget) setDrawerDeptId(null);
           }}
         >
-          <div className="flex h-full w-full max-w-lg flex-col bg-white shadow-2xl border-l border-[#D9DEE2]">
+          <div
+            ref={drawerPanelRef}
+            className="flex h-full w-full max-w-lg flex-col bg-white shadow-2xl border-l border-[#D9DEE2]"
+          >
             <div className="flex items-start justify-between gap-3 border-b border-[#D9DEE2] px-6 py-4">
               <div>
                 <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-[#A64011]">
@@ -934,6 +1156,7 @@ export const BudgetDashboardSection: React.FC<BudgetDashboardSectionProps> = ({
                 <p className="text-[12px] text-[#4F5C67]">{drawerSummary.periodLabel}</p>
               </div>
               <button
+                ref={drawerCloseBtnRef}
                 type="button"
                 aria-label="Close transaction drawer"
                 onClick={() => setDrawerDeptId(null)}

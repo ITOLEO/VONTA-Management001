@@ -448,7 +448,7 @@ export function PrivateProjectSettingsPage() {
             ) : (
               <AlertCircle className="mx-auto h-8 w-8 text-[#A64011]" aria-hidden="true" />
             )}
-            <h1 className="mt-3 text-[26px] leading-[32px] font-bold text-[#1B2A4A]">
+            <h1 className="vonta-page-title mt-3 text-[#1B2A4A]">
               {isForbidden ? 'Access forbidden' : 'Could not open project settings'}
             </h1>
             <p className="mt-2 text-[15px] leading-[22px] text-[#4F5C67]">
@@ -571,7 +571,7 @@ export function PrivateProjectSettingsPage() {
             <div className="min-w-0 flex-1 max-w-[780px]">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h1 className="text-[26px] leading-[32px] font-bold tracking-tight text-[#1B2A4A]">
+                  <h1 className="vonta-page-title text-[#1B2A4A]">
                     Project settings
                   </h1>
                   <p className="mt-1 text-[14px] leading-[20px] text-[#4F5C67]">

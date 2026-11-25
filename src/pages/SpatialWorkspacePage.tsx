@@ -9,7 +9,6 @@ import {
   Eye,
   Focus,
   Info,
-  Layers,
   MapPin,
   Plus,
   X,
@@ -39,7 +38,6 @@ import type {
 import {
   SpatialViewport3D,
   type CameraFocusCommand,
-  type PrivateAnnotationDraft,
   type SpatialViewportHandle,
 } from '../components/SpatialViewport3D';
 import { ProjectNavbar } from '../components/ProjectNavbar';
@@ -50,6 +48,7 @@ import { WorkspaceOutputActions } from '../components/WorkspaceOutputActions';
 import { WorkspaceCompassWidget } from '../components/WorkspaceCompassWidget';
 import { RoomsPicker } from '../components/RoomsPicker';
 import { DepartmentPicker } from '../components/DepartmentPicker';
+import { WorkspaceLayersPicker } from '../components/WorkspaceLayersPicker';
 import { ColorPickerControl } from '../components/ColorPickerControl';
 import { InviteMemberModal } from '../components/InviteMemberModal';
 import { MaterialsSection } from '../components/MaterialsSection';
@@ -57,17 +56,18 @@ import { EvidenceSection } from '../components/EvidenceSection';
 import { getProjectRoutes } from '../utils/projectRoutes';
 import type { DrawingLineStyle } from '../domain/workspaceMath';
 import {
-  PRIVATE_DRAWING_FORMAT_VERSION,
-  clearPrivateAnnotationsForScope,
-  deletePrivateAnnotation,
+  buildWorkspaceGeometryLayerCatalog,
+  filterWorkspacePins,
+  isAllPinsFilterClear,
+  resetWorkspacePinFilters,
+  type GeometryLayerKey,
+} from '../domain/workspaceControls';
+import {
   isCursorModeTool,
-  loadPrivateAnnotations,
-  savePrivateAnnotation,
-  type DrawingStorageMode,
   type DrawingStrokeWidthKey,
   type DrawingToolType,
-  type PrivateSurfaceAnnotation,
 } from '../utils/privateDrawingStore';
+import { usePrivateAnnotations } from '../hooks/usePrivateAnnotations';
 
 export function SpatialWorkspacePage() {
   const { project: projectParam } = useParams();
@@ -114,6 +114,7 @@ export function SpatialWorkspacePage() {
   // Overlay & docked rail states
   const [roomsOpen, setRoomsOpen] = useState(false);
   const [departmentPickerOpen, setDepartmentPickerOpen] = useState(false);
+  const [layersPickerOpen, setLayersPickerOpen] = useState(false);
   const [pinDrawerOpen, setPinDrawerOpen] = useState(false);
   const [modelInfoOpen, setModelInfoOpen] = useState(false);
   const [inviteModalOpen, setInviteModalOpen] = useState(false);
@@ -124,8 +125,7 @@ export function SpatialWorkspacePage() {
   const [cameraAzimuthDeg, setCameraAzimuthDeg] = useState(0);
   const [showGroundCompass, setShowGroundCompass] = useState(false);
 
-  // Private device-local 3D drawings (v2)
-  const [annotations, setAnnotations] = useState<PrivateSurfaceAnnotation[]>([]);
+  // Private device-local 3D drawing tool preferences (separate from server-saved Pin color)
   const [activeDrawingTool, setActiveDrawingTool] = useState<DrawingToolType>('cursor');
   const [drawingColorHex, setDrawingColorHex] = useState<string>('#E11D48');
   const [drawingStrokeWidth, setDrawingStrokeWidth] = useState<DrawingStrokeWidthKey>('medium');
@@ -135,9 +135,6 @@ export function SpatialWorkspacePage() {
   const [hideLocalDrawings, setHideLocalDrawings] = useState<boolean>(
     () => searchParams.get('hideLocalDrawings') === '1'
   );
-  const [drawingStorageMode, setDrawingStorageMode] = useState<DrawingStorageMode>('indexeddb');
-  const [drawingStorageWarning, setDrawingStorageWarning] = useState<string | null>(null);
-  const [drawingRejectedNotice, setDrawingRejectedNotice] = useState<string | null>(null);
 
   // Create Pin state
   const [createMode, setCreateMode] = useState(false);
@@ -178,29 +175,41 @@ export function SpatialWorkspacePage() {
     ]
   );
 
-  // Immediately clear in-memory marks on account/project/area/permission change, then hydrate scoped IndexedDB marks
-  useEffect(() => {
-    setAnnotations([]);
-    setActiveDrawingTool('cursor');
-    setDrawingDeleteMode(false);
-    setDrawingRejectedNotice(null);
-
-    if (!addendum.capabilities.canDrawLocally) {
-      setDrawingStorageWarning(null);
-      return;
+  const handleToolActivatedFromShortcut = useCallback((tool: DrawingToolType) => {
+    if (!isCursorModeTool(tool)) {
+      setCreateMode(false);
+      setPendingHit(null);
+      setHideLocalDrawings(false);
     }
+  }, []);
 
-    let cancelled = false;
-    void loadPrivateAnnotations(drawingScope).then((res) => {
-      if (cancelled) return;
-      setAnnotations(res.data);
-      setDrawingStorageMode(res.storageMode);
-      setDrawingStorageWarning(res.warning);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [drawingScope, addendum.capabilities.canDrawLocally]);
+  const {
+    annotations,
+    selectedAnnotationId,
+    selectedAnnotation,
+    canUndo,
+    canRedo,
+    undoCount,
+    redoCount,
+    storageMode: drawingStorageMode,
+    storageWarning: drawingStorageWarning,
+    rejectedNotice: drawingRejectedNotice,
+    setRejectedNotice: setDrawingRejectedNotice,
+    selectAnnotation,
+    createAnnotation: handleCreateAnnotation,
+    deleteAnnotation: handleDeleteAnnotation,
+    clearAllOwnAnnotations: handleClearAllOwnAnnotations,
+    undoAnnotation: handleUndoAnnotation,
+    redoAnnotation: handleRedoAnnotation,
+  } = usePrivateAnnotations({
+    scope: drawingScope,
+    canDraw: addendum.capabilities.canDrawLocally,
+    activeTool: activeDrawingTool,
+    setActiveTool: setActiveDrawingTool,
+    deleteMode: drawingDeleteMode,
+    setDeleteMode: setDrawingDeleteMode,
+    onToolActivated: handleToolActivatedFromShortcut,
+  });
 
   // Apply shared view hydration (E04–E06): restores camera & layers and keeps local drawings hidden on open
   const sharedStateAppliedRef = useRef<string | null>(null);
@@ -255,41 +264,21 @@ export function SpatialWorkspacePage() {
     }
   }, [searchParams, location.state, addendum]);
 
-  const handleCreateAnnotation = useCallback(
-    (draft: PrivateAnnotationDraft) => {
-      if (!addendum.capabilities.canDrawLocally) return;
-      const annotation: PrivateSurfaceAnnotation = {
-        ...draft,
-        id: `mark-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-        formatVersion: PRIVATE_DRAWING_FORMAT_VERSION,
-        ...drawingScope,
-        createdAt: new Date().toISOString(),
-      };
-      setAnnotations((prev) => [...prev, annotation]);
-      setDrawingRejectedNotice(null);
-      void savePrivateAnnotation(annotation).then((res) => {
-        setDrawingStorageMode(res.storageMode);
-        setDrawingStorageWarning(res.warning);
-      });
+  const handleSelectAnnotation = useCallback(
+    (annotationId: string | null) => {
+      if (annotationId) {
+        setCreateMode(false);
+        setPendingHit(null);
+        setVoidClickError(null);
+        setSelectedPinId(null);
+        setSelectedElementId(null);
+        deepLinkAppliedRef.current = null;
+        setSearchParams({}, { replace: true });
+      }
+      selectAnnotation(annotationId);
     },
-    [addendum.capabilities.canDrawLocally, drawingScope]
+    [selectAnnotation, setSearchParams]
   );
-
-  const handleDeleteAnnotation = useCallback(
-    (annotationId: string) => {
-      if (!addendum.capabilities.canDrawLocally) return;
-      setAnnotations((prev) => prev.filter((a) => a.id !== annotationId));
-      void deletePrivateAnnotation(drawingScope, annotationId);
-    },
-    [addendum.capabilities.canDrawLocally, drawingScope]
-  );
-
-  const handleClearAllOwnAnnotations = useCallback(() => {
-    if (!addendum.capabilities.canDrawLocally) return;
-    setAnnotations([]);
-    setDrawingDeleteMode(false);
-    void clearPrivateAnnotationsForScope(drawingScope);
-  }, [addendum.capabilities.canDrawLocally, drawingScope]);
 
   // Replace legacy /spatial?overview=1 bookmarks with full Overview in the same namespace
   const requestedOverviewParam = searchParams.get('overview');
@@ -334,18 +323,20 @@ export function SpatialWorkspacePage() {
     return state.pins.filter((p) => p.areaId === activeAreaId);
   }, [state.pins, activeAreaId]);
 
-  const visiblePins = useMemo(() => {
-    let list = areaPins;
-    if (activeRoomId) {
-      list = list.filter((p) => p.roomId === activeRoomId);
-    }
-    if (activeDepartmentFilter) {
-      list = list.filter(
-        (p) => p.department.toLowerCase() === activeDepartmentFilter.toLowerCase()
-      );
-    }
-    return list;
-  }, [areaPins, activeRoomId, activeDepartmentFilter]);
+  const visiblePins = useMemo(
+    () =>
+      filterWorkspacePins(areaPins, {
+        roomId: activeRoomId,
+        departmentName: activeDepartmentFilter,
+        showPinMarkers: layers.pins,
+      }).matchingPins,
+    [areaPins, activeRoomId, activeDepartmentFilter, layers.pins]
+  );
+
+  const geometryLayerCatalog = useMemo(
+    () => buildWorkspaceGeometryLayerCatalog(`sheet ${state.project.sheetCode}`),
+    [state.project.sheetCode]
+  );
 
   const roomCountByArea = useMemo(() => {
     const map: Record<string, number> = {};
@@ -376,32 +367,39 @@ export function SpatialWorkspacePage() {
   }, [visiblePins, selectedElementId]);
 
   // Pin drawer exposes all authorized project Pins across areas (filtered by room/dept when active)
-  const pinsForDrawer = useMemo(() => {
-    let list = state.pins;
-    if (activeRoomId) {
-      list = list.filter((p) => p.roomId === activeRoomId);
-    }
-    if (activeDepartmentFilter) {
-      list = list.filter(
-        (p) => p.department.toLowerCase() === activeDepartmentFilter.toLowerCase()
-      );
-    }
-    return list;
-  }, [state.pins, activeRoomId, activeDepartmentFilter]);
+  const pinsForDrawer = useMemo(
+    () =>
+      filterWorkspacePins(state.pins, {
+        roomId: activeRoomId,
+        departmentName: activeDepartmentFilter,
+        showPinMarkers: layers.pins,
+      }).matchingPins,
+    [state.pins, activeRoomId, activeDepartmentFilter, layers.pins]
+  );
 
-  const isAllPinFilterClear =
-    !activeRoomId && !activeDepartmentFilter && !selectedPinId && layers.pins;
+  const isAllPinFilterClear = isAllPinsFilterClear({
+    activeRoomId,
+    activeDepartmentFilter,
+    selectedPinId,
+    layers,
+  });
 
   const handleResetAllPinFilters = useCallback(() => {
-    setActiveRoomId(null);
-    setActiveDepartmentFilter(null);
-    setSelectedPinId(null);
+    const reset = resetWorkspacePinFilters({
+      activeRoomId,
+      activeDepartmentFilter,
+      selectedPinId,
+      layers,
+    });
+    setActiveRoomId(reset.activeRoomId);
+    setActiveDepartmentFilter(reset.activeDepartmentFilter);
+    setSelectedPinId(reset.selectedPinId);
     setSelectedElementId(null);
     setLayers((prev) => ({ ...prev, pins: true }));
     deepLinkAppliedRef.current = null;
     setSearchParams({}, { replace: true });
     issueCameraCommand({ kind: 'overall' });
-  }, [setSearchParams, issueCameraCommand]);
+  }, [activeRoomId, activeDepartmentFilter, selectedPinId, layers, setSearchParams, issueCameraCommand]);
 
   // L02: Workspace sidebar footer order: Pin list | divider | Model info | divider | Project settings
   const workspaceFooterItems = useMemo<RailNavItem[]>(
@@ -434,9 +432,10 @@ export function SpatialWorkspacePage() {
   );
 
   const handleSelectPin = useCallback(
-    (pinId: string) => {
+    (pinId: string, options?: { focusCamera?: boolean }) => {
       const target = state.pins.find((p) => p.id === pinId);
       if (!target) return;
+      selectAnnotation(null);
       setCreateMode(false);
       setPendingHit(null);
       setVoidClickError(null);
@@ -445,13 +444,16 @@ export function SpatialWorkspacePage() {
       setSelectedElementId(target.elementId);
       deepLinkAppliedRef.current = target.id;
       setSearchParams({ pin: target.id }, { replace: true });
-      issueCameraCommand({ kind: 'pin', pin: target });
+      if (options?.focusCamera) {
+        issueCameraCommand({ kind: 'pin', pin: target });
+      }
     },
-    [state.pins, setSearchParams, issueCameraCommand]
+    [state.pins, selectAnnotation, setSearchParams, issueCameraCommand]
   );
 
   const handleSelectElement = useCallback(
     (elementId: string) => {
+      selectAnnotation(null);
       setCreateMode(false);
       setPendingHit(null);
       setVoidClickError(null);
@@ -460,15 +462,16 @@ export function SpatialWorkspacePage() {
       deepLinkAppliedRef.current = null;
       setSearchParams({}, { replace: true });
     },
-    [setSearchParams]
+    [selectAnnotation, setSearchParams]
   );
 
   const handleClearSelection = useCallback(() => {
+    selectAnnotation(null);
     setSelectedPinId(null);
     setSelectedElementId(null);
     deepLinkAppliedRef.current = null;
     setSearchParams({}, { replace: true });
-  }, [setSearchParams]);
+  }, [selectAnnotation, setSearchParams]);
 
   const handleSelectArea = useCallback(
     (nextAreaId: string) => {
@@ -492,21 +495,12 @@ export function SpatialWorkspacePage() {
     [issueCameraCommand]
   );
 
-  const handleToggleLayer = (key: LayerKey) => {
+  const handleToggleGeometryLayer = (key: GeometryLayerKey) => {
+    const descriptor = geometryLayerCatalog.find((item) => item.key === key);
     setLayers((prev) => {
       const nextVal = !prev[key];
-      if (key === 'electrical') {
-        setLayerNotice(
-          nextVal
-            ? 'Electrical layer: No electrical routing source on sheet A-03 R00. Conduit paths are not drawn.'
-            : null
-        );
-      } else if (key === 'plumbing') {
-        setLayerNotice(
-          nextVal
-            ? 'Plumbing layer: No plumbing routing source on sheet A-03 R00. Pipe paths are not drawn.'
-            : null
-        );
+      if (nextVal && descriptor && !descriptor.available && descriptor.unavailableNotice) {
+        setLayerNotice(descriptor.unavailableNotice);
       } else {
         setLayerNotice(null);
       }
@@ -532,6 +526,7 @@ export function SpatialWorkspacePage() {
       setCreateFormError(null);
       return;
     }
+    selectAnnotation(null);
     setSelectedPinId(null);
     setSelectedElementId(null);
     setPendingHit(null);
@@ -543,6 +538,7 @@ export function SpatialWorkspacePage() {
     setModelInfoOpen(false);
     setRoomsOpen(false);
     setDepartmentPickerOpen(false);
+    setLayersPickerOpen(false);
     setActiveDrawingTool('cursor');
     setDrawingDeleteMode(false);
     setNewPinColorManualOverride(false);
@@ -555,7 +551,6 @@ export function SpatialWorkspacePage() {
     }
     setCreateMode(true);
     setSearchParams({}, { replace: true });
-    issueCameraCommand({ kind: 'overall' });
   };
 
   const handleCreateSurfaceHit = useCallback((hit: SurfaceHitCandidate) => {
@@ -603,6 +598,67 @@ export function SpatialWorkspacePage() {
     issueCameraCommand({ kind: 'pin', pin: res.createdPin });
   };
 
+  const inspectorOpen = Boolean(selectedPin || selectedElement || createMode);
+  const inspectorRef = useRef<HTMLElement | null>(null);
+  const inspectorOpenerRef = useRef<HTMLElement | null>(null);
+  const prevInspectorOpenRef = useRef(false);
+
+  const handleCloseRightInspector = useCallback(() => {
+    setCreateMode(false);
+    setPendingHit(null);
+    setVoidClickError(null);
+    setCreateFormError(null);
+    handleClearSelection();
+  }, [handleClearSelection]);
+
+  useEffect(() => {
+    const wasOpen = prevInspectorOpenRef.current;
+    prevInspectorOpenRef.current = inspectorOpen;
+
+    if (inspectorOpen && !wasOpen) {
+      const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (active && active !== document.body && !inspectorRef.current?.contains(active)) {
+        inspectorOpenerRef.current = active;
+      }
+      const raf = window.requestAnimationFrame(() => {
+        const closeBtn = inspectorRef.current?.querySelector<HTMLElement>(
+          'button[aria-label^="Close "]'
+        );
+        if (closeBtn) {
+          closeBtn.focus({ preventScroll: true });
+        } else {
+          inspectorRef.current?.focus({ preventScroll: true });
+        }
+      });
+      return () => window.cancelAnimationFrame(raf);
+    }
+
+    if (!inspectorOpen && wasOpen) {
+      const opener = inspectorOpenerRef.current;
+      inspectorOpenerRef.current = null;
+      const fallback =
+        document.querySelector<HTMLElement>('[data-testid="rail-item-pin-list"]') ??
+        document.querySelector<HTMLElement>('[data-testid="dock-add-pin-button"]');
+      const target = opener && opener.isConnected ? opener : fallback;
+      if (target) {
+        window.requestAnimationFrame(() => target.focus({ preventScroll: true }));
+      }
+    }
+  }, [inspectorOpen]);
+
+  useEffect(() => {
+    if (!inspectorOpen || inviteModalOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+        e.preventDefault();
+        handleCloseRightInspector();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [inspectorOpen, inviteModalOpen, handleCloseRightInspector]);
+
   if (requestedOverviewParam === '1') {
     return null;
   }
@@ -628,10 +684,9 @@ export function SpatialWorkspacePage() {
     );
   }
 
-  const inspectorOpen = Boolean(selectedPin || selectedElement || createMode);
   const showUnverifiedSplitView =
     activeAreaId === 'all' && allAreasDisplay.mode === 'separate_unverified_previews';
-  const addPinActionLabel = routes.isDemoPrefix ? 'Add demo pin' : 'Add pin';
+  const addPinActionLabel = 'Add Pin';
 
   return (
     <div className="relative flex h-dvh w-screen flex-col overflow-hidden bg-[#F4F3EF] text-[#1B2A4A]">
@@ -719,6 +774,7 @@ export function SpatialWorkspacePage() {
               onCreateVoidClick={handleCreateVoidClick}
               onMeshCrossCheckMeasured={setLiveCrossCheck}
               annotations={annotations}
+              selectedAnnotationId={selectedAnnotationId}
               activeDrawingTool={activeDrawingTool}
               drawingColorHex={drawingColorHex}
               drawingStrokeWidth={drawingStrokeWidth}
@@ -731,6 +787,7 @@ export function SpatialWorkspacePage() {
               northAngleDeg={0}
               showGroundCompass={showGroundCompass}
               onCameraAzimuthChange={setCameraAzimuthDeg}
+              onSelectAnnotation={handleSelectAnnotation}
               onCreateAnnotation={handleCreateAnnotation}
               onDeleteAnnotation={handleDeleteAnnotation}
               onDrawingRejected={(reason) => setDrawingRejectedNotice(reason)}
@@ -746,6 +803,7 @@ export function SpatialWorkspacePage() {
                 setActiveDrawingTool(tool);
                 setDrawingRejectedNotice(null);
                 if (!isCursorModeTool(tool)) {
+                  selectAnnotation(null);
                   setCreateMode(false);
                   setPendingHit(null);
                   setHideLocalDrawings(false);
@@ -769,6 +827,19 @@ export function SpatialWorkspacePage() {
               storageWarning={drawingStorageWarning}
               rejectedNotice={drawingRejectedNotice}
               isModelCalibrated={true}
+              selectedAnnotation={selectedAnnotation}
+              onDeleteSelectedAnnotation={() => {
+                if (selectedAnnotationId) {
+                  void handleDeleteAnnotation(selectedAnnotationId);
+                }
+              }}
+              onDeselectAnnotation={() => selectAnnotation(null)}
+              canUndo={canUndo}
+              canRedo={canRedo}
+              undoCount={undoCount}
+              redoCount={redoCount}
+              onUndo={handleUndoAnnotation}
+              onRedo={handleRedoAnnotation}
             />
           </div>
 
@@ -969,7 +1040,7 @@ export function SpatialWorkspacePage() {
                                 type="button"
                                 onClick={() => {
                                   setActiveAreaId(pin.areaId);
-                                  handleSelectPin(pin.id);
+                                  handleSelectPin(pin.id, { focusCamera: true });
                                   setPinDrawerOpen(false);
                                 }}
                                 className="mt-2 inline-flex items-center gap-1 rounded-md border border-[#D4652F]/40 bg-[#FFF3EB] px-2.5 py-1 text-[12px] font-semibold text-[#A64011] hover:bg-[#FFE5D3]"
@@ -1158,25 +1229,27 @@ export function SpatialWorkspacePage() {
             {dockExpanded && (
               <div
                 role="toolbar"
-                aria-label="Camera, rooms, and layer controls"
-                className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-2 rounded-xl border border-[#D9DEE2] bg-white px-3 py-2 shadow-sm"
+                aria-label="Camera, rooms, Pin filters, and 3D layers controls"
+                data-testid="workspace-bottom-dock"
+                className="pointer-events-auto flex max-w-full flex-wrap items-center justify-center gap-1 rounded-xl border border-[#D9DEE2] bg-white px-2 py-1.5 shadow-sm"
               >
-                {/* Camera & Upward Rooms Picker (L02: Fit Model button removed from bottom dock) */}
-                <div className="flex flex-wrap items-center gap-1.5">
+                {/* Overall View & Rooms */}
+                <div className="flex flex-wrap items-center gap-1">
                   <button
                     type="button"
+                    data-testid="dock-overall-view-button"
                     onClick={() => {
                       setActiveRoomId(null);
                       issueCameraCommand({ kind: 'overall' });
                     }}
-                    className="inline-flex min-h-[44px] items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 text-[14px] leading-[20px] font-medium text-[#1B2A4A] hover:bg-[#F4F3EF] md:min-h-[38px]"
+                    className="inline-flex min-h-[44px] items-center gap-1.5 whitespace-nowrap rounded-lg px-2 text-[13px] leading-[18px] font-medium text-[#1B2A4A] hover:bg-[#F4F3EF] md:min-h-[36px]"
                   >
                     <Eye className="h-3.5 w-3.5 text-[#4F5C67]" aria-hidden="true" />
                     Overall View
                   </button>
 
                   {/* Single upward Rooms picker */}
-                  <div className="border-l border-[#D9DEE2] pl-1.5">
+                  <div className="border-l border-[#D9DEE2] pl-1">
                     <RoomsPicker
                       rooms={visibleRooms}
                       pins={areaPins}
@@ -1186,6 +1259,7 @@ export function SpatialWorkspacePage() {
                         setRoomsOpen(next);
                         if (next) {
                           setDepartmentPickerOpen(false);
+                          setLayersPickerOpen(false);
                           setModelInfoOpen(false);
                         }
                       }}
@@ -1193,8 +1267,8 @@ export function SpatialWorkspacePage() {
                     />
                   </div>
 
-                  {/* Single upward Department picker (styled like Rooms) */}
-                  <div className="border-l border-[#D9DEE2] pl-1.5">
+                  {/* Upward Pin filters popover (left of 3D layers) */}
+                  <div className="border-l border-[#D9DEE2] pl-1">
                     <DepartmentPicker
                       departments={departments}
                       pins={areaPins}
@@ -1204,80 +1278,71 @@ export function SpatialWorkspacePage() {
                         setDepartmentPickerOpen(next);
                         if (next) {
                           setRoomsOpen(false);
+                          setLayersPickerOpen(false);
                           setModelInfoOpen(false);
                         }
                       }}
                       onSelectDepartment={(deptName) => {
                         setActiveDepartmentFilter(deptName);
-                        setLayers((prev) => ({ ...prev, pins: true }));
+                        if (deptName) {
+                          setLayers((prev) => ({ ...prev, pins: true }));
+                        }
                       }}
+                      showPinMarkers={layers.pins}
+                      onTogglePinMarkers={() =>
+                        setLayers((prev) => ({ ...prev, pins: !prev.pins }))
+                      }
+                      isAllPinsClear={isAllPinFilterClear}
+                      onResetAllPins={handleResetAllPinFilters}
+                      activeRoomName={
+                        activeRoomId
+                          ? model.rooms.find((r) => r.id === activeRoomId)?.name ?? null
+                          : null
+                      }
                     />
                   </div>
 
-                  {/* Pin Focus */}
+                  {/* Upward 3D layers popover (right of Pin filters) */}
+                  <div className="border-l border-[#D9DEE2] pl-1">
+                    <WorkspaceLayersPicker
+                      catalog={geometryLayerCatalog}
+                      layers={layers}
+                      open={layersPickerOpen}
+                      onOpenChange={(next) => {
+                        setLayersPickerOpen(next);
+                        if (next) {
+                          setRoomsOpen(false);
+                          setDepartmentPickerOpen(false);
+                          setModelInfoOpen(false);
+                        }
+                      }}
+                      onToggleLayer={handleToggleGeometryLayer}
+                    />
+                  </div>
+                </div>
+
+                {/* Pin Focus & Primary Add Pin Action */}
+                <div className="flex flex-wrap items-center justify-center gap-1 border-t border-[#D9DEE2] pt-1.5 lg:border-l lg:border-t-0 lg:pl-1.5 lg:pt-0">
                   <button
                     type="button"
+                    data-testid="dock-pin-focus-button"
                     disabled={!selectedPin}
                     onClick={() => {
                       if (selectedPin) {
                         issueCameraCommand({ kind: 'pin', pin: selectedPin });
                       }
                     }}
-                    className="inline-flex min-h-[44px] items-center gap-1.5 whitespace-nowrap rounded-lg border border-[#D9DEE2] px-2.5 text-[14px] leading-[20px] font-medium text-[#1B2A4A] hover:bg-[#F4F3EF] disabled:opacity-45 md:min-h-[38px]"
+                    className="inline-flex min-h-[44px] items-center gap-1 whitespace-nowrap rounded-lg border border-[#D9DEE2] px-2 text-[13px] leading-[18px] font-medium text-[#1B2A4A] hover:bg-[#F4F3EF] disabled:opacity-45 md:min-h-[36px]"
                   >
                     <Focus className="h-3.5 w-3.5 text-[#D4652F]" aria-hidden="true" />
                     Pin Focus
-                  </button>
-                </div>
-
-                {/* Technical Layers + All (clear Pin filters) + Primary Add Pin Action */}
-                <div className="flex flex-wrap items-center justify-center gap-1.5 border-t border-[#D9DEE2] pt-1.5 lg:border-l lg:border-t-0 lg:pl-2.5 lg:pt-0">
-                  <Layers className="mr-0.5 hidden h-3.5 w-3.5 text-[#4F5C67] sm:inline" aria-hidden="true" />
-                  {(
-                    [
-                      ['civil', 'Civil'],
-                      ['electrical', 'Electrical'],
-                      ['plumbing', 'Plumbing'],
-                    ] as Array<[LayerKey, string]>
-                  ).map(([key, label]) => {
-                    const active = layers[key];
-                    return (
-                      <button
-                        key={key}
-                        type="button"
-                        aria-pressed={active}
-                        onClick={() => handleToggleLayer(key)}
-                        className={`inline-flex min-h-[44px] items-center whitespace-nowrap rounded-md px-2.5 text-[13px] leading-[18px] font-medium transition-colors md:min-h-[34px] ${
-                          active
-                            ? 'bg-[#1B2A4A] text-white'
-                            : 'bg-[#F4F3EF] text-[#4F5C67] hover:text-[#1B2A4A]'
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
-
-                  {/* Renamed Pins -> All: clears all active Pin filters; active ONLY when filter set is empty */}
-                  <button
-                    type="button"
-                    data-testid="dock-pin-filter-all"
-                    aria-pressed={isAllPinFilterClear}
-                    onClick={handleResetAllPinFilters}
-                    className={`inline-flex min-h-[44px] items-center whitespace-nowrap rounded-md px-2.5 text-[13px] leading-[18px] font-medium transition-colors md:min-h-[34px] ${
-                      isAllPinFilterClear
-                        ? 'bg-[#1B2A4A] text-white'
-                        : 'bg-[#F4F3EF] text-[#4F5C67] hover:text-[#1B2A4A]'
-                    }`}
-                  >
-                    All
                   </button>
 
                   <button
                     type="button"
                     onClick={handleStartCreateMode}
                     data-testid="dock-add-pin-button"
-                    className={`ml-0.5 inline-flex min-h-[44px] items-center gap-1.5 whitespace-nowrap rounded-lg px-3.5 text-[14px] leading-[20px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE] md:min-h-[36px] ${
+                    className={`inline-flex min-h-[44px] min-w-[112px] items-center justify-center gap-1 whitespace-nowrap rounded-lg px-2.5 text-[13px] leading-[18px] font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE] md:min-h-[36px] ${
                       createMode
                         ? 'border border-[#A64011] bg-[#A64011]/10 text-[#A64011]'
                         : 'bg-[#A64011] text-white hover:bg-[#8C350E]'
@@ -1301,11 +1366,14 @@ export function SpatialWorkspacePage() {
           </div>
         </main>
 
-        {/* Contextual Right Inspector (Desktop side panel / Mobile bottom sheet) */}
+        {/* Contextual Right Inspector (Desktop overlay / Mobile touch bottom sheet — never resizes canvas or camera) */}
         {inspectorOpen && (
           <aside
+            ref={inspectorRef}
+            tabIndex={-1}
             aria-label="Spatial Inspector"
-            className="fixed inset-x-0 bottom-0 z-30 flex max-h-[76dvh] flex-col rounded-t-2xl border-t border-[#D9DEE2] bg-white shadow-xl md:static md:z-10 md:h-full md:max-h-none md:w-[390px] md:shrink-0 md:rounded-none md:border-l md:border-t-0 md:shadow-none"
+            data-testid="workspace-right-inspector"
+            className="fixed inset-x-0 bottom-0 z-30 flex max-h-[76dvh] flex-col rounded-t-2xl border-t border-[#D9DEE2] bg-white shadow-xl outline-none md:absolute md:inset-y-0 md:right-0 md:left-auto md:bottom-auto md:z-30 md:h-full md:max-h-none md:w-[328px] md:rounded-none md:border-l md:border-t-0 md:shadow-2xl"
           >
             {/* Mobile grab bar */}
             <div className="flex justify-center pt-2 md:hidden" aria-hidden="true">

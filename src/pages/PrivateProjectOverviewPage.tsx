@@ -4,11 +4,8 @@ import {
   AlertCircle,
   ArrowRight,
   Box,
-  CheckCircle2,
-  ClipboardCheck,
   Layers,
   MapPin,
-  PackageOpen,
   RefreshCw,
   ShieldAlert,
 } from 'lucide-react';
@@ -31,6 +28,7 @@ import { PrivateNavbar } from '../components/PrivateNavbar';
 import { ContextualRail } from '../components/ContextualRail';
 import { OverviewBlueprintHub } from '../components/OverviewBlueprintHub';
 import { OverviewBlueprintRailSlot } from '../components/OverviewBlueprintRailSlot';
+import { OverviewKpiRow } from '../components/OverviewKpiRow';
 import { BlueprintLightboxModal } from '../components/BlueprintLightboxModal';
 import { DepartmentDashboardSection } from '../components/DepartmentDashboardSection';
 import { BudgetDashboardSection } from '../components/BudgetDashboardSection';
@@ -39,6 +37,7 @@ import type { ProjectBudgetLedger } from '../domain/budgetLedger';
 import type { Department } from '../domain/types';
 import { getProjectRoutes } from '../utils/projectRoutes';
 import { buildOverviewRailGroups } from '../utils/moduleNavConfig';
+import { buildLiveOverviewKpis } from '../utils/overviewKpis';
 
 export function PrivateProjectOverviewPage() {
   const { project: projectId = '' } = useParams();
@@ -207,7 +206,7 @@ export function PrivateProjectOverviewPage() {
             ) : (
               <AlertCircle className="mx-auto h-8 w-8 text-[#A64011]" aria-hidden="true" />
             )}
-            <h1 className="mt-3 text-[26px] leading-[32px] font-bold text-[#1B2A4A]">
+            <h1 className="vonta-page-title mt-3 text-[#1B2A4A]">
               {isForbidden ? 'Access forbidden' : 'Project unavailable'}
             </h1>
             <p className="mt-2 text-[15px] leading-[22px] text-[#4F5C67]">
@@ -246,18 +245,11 @@ export function PrivateProjectOverviewPage() {
   const pins = project.pins ?? [];
   const latestJob = project.jobs?.[0] ?? null;
 
-  const approvedCount = pins.filter((p) => p.status === 'approved').length;
-  const pendingQcCount = pins.filter((p) => p.status === 'pending_review').length;
-  const materialExceptionCount = pins.filter((p) =>
-    (p.materials ?? []).some((m) => m.issuedQty < m.requiredQty)
-  ).length;
-  const blockedCount = pins.filter(
-    (p) =>
-      (p.status === 'open' || p.status === 'in_progress') &&
-      (!p.evidence?.before ||
-        !p.evidence?.after ||
-        (p.materials ?? []).some((m) => m.issuedQty < m.requiredQty))
-  ).length;
+  const kpiItems = buildLiveOverviewKpis({
+    pins,
+    publishedModelCount: publishedModels.length,
+    areaCount: areas.length,
+  });
 
   return (
     <div className="min-h-dvh flex flex-col bg-[#F4F3EF] text-[#1B2A4A]">
@@ -282,10 +274,10 @@ export function PrivateProjectOverviewPage() {
         />
 
         <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8">
-          <div className="mx-auto w-full max-w-[1360px]">
+          <div className="w-full">
             {/* Upper Band: Left Context & Open Workspace | Right Blueprint Summary Hub */}
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-stretch">
-              <div className="flex flex-col gap-5 lg:col-span-5">
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(300px,350px)_minmax(0,1fr)] lg:items-stretch xl:grid-cols-[minmax(320px,380px)_minmax(0,1fr)]">
+              <div className="flex min-w-0 flex-col gap-5">
                 <section className="flex flex-1 flex-col justify-between rounded-xl border border-[#D9DEE2] bg-white p-6">
                   <div>
                     <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] leading-[18px]">
@@ -304,7 +296,7 @@ export function PrivateProjectOverviewPage() {
                       </span>
                     </div>
 
-                    <h1 className="mt-2 text-[26px] leading-[32px] font-bold tracking-tight text-[#1B2A4A]">
+                    <h1 className="vonta-page-title mt-2 text-[#1B2A4A]">
                       {project.name}
                     </h1>
                     <p className="mt-1 text-[15px] leading-[22px] text-[#4F5C67]">
@@ -376,7 +368,7 @@ export function PrivateProjectOverviewPage() {
                 </section>
               </div>
 
-              <div className="lg:col-span-7">
+              <div className="min-w-0">
                 <OverviewBlueprintHub
                   wholeBuilding={buildingSummary.wholeBuilding}
                   departmentStrip={buildingSummary.departmentStrip}
@@ -403,86 +395,11 @@ export function PrivateProjectOverviewPage() {
               }}
             />
 
-            {/* Compact 5-Tile Operational Summary Row */}
-            <section
-              aria-label="Operational summary"
-              className="mt-6 grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-5"
-            >
-              <Link
-                to={`${routes.workListPath}?filter=approved`}
-                className="group rounded-xl border border-[#D9DEE2] bg-white p-4 transition-colors hover:border-[#D4652F]"
-              >
-                <div className="flex items-center justify-between text-[13px] text-[#4F5C67]">
-                  <span>Verified progress</span>
-                  <CheckCircle2 className="h-4 w-4 text-[#4F5C67] group-hover:text-[#D4652F]" aria-hidden="true" />
-                </div>
-                <div className="mt-1.5 text-[22px] leading-[28px] font-bold text-[#1B2A4A] tabular-nums">
-                  {approvedCount}/{pins.length}
-                </div>
-                <div className="mt-0.5 text-[12px] text-[#4F5C67]">
-                  {pins.length > 0 ? `${Math.round((approvedCount / pins.length) * 100)}% approved` : 'No Pins yet'}
-                </div>
-              </Link>
-
-              <Link
-                to={routes.workspacePath}
-                className="group rounded-xl border border-[#D9DEE2] bg-white p-4 transition-colors hover:border-[#D4652F]"
-              >
-                <div className="flex items-center justify-between text-[13px] text-[#4F5C67]">
-                  <span>Stage readiness</span>
-                  <Layers className="h-4 w-4 text-[#4F5C67] group-hover:text-[#D4652F]" aria-hidden="true" />
-                </div>
-                <div className="mt-1.5 text-[22px] leading-[28px] font-bold text-[#1B2A4A] tabular-nums">
-                  {publishedModels.length}/{areas.length}
-                </div>
-                <div className="mt-0.5 text-[12px] text-[#4F5C67]">Published areas</div>
-              </Link>
-
-              <Link
-                to={`${routes.workListPath}?filter=pending-qc`}
-                className="group rounded-xl border border-[#D9DEE2] bg-white p-4 transition-colors hover:border-[#D4652F]"
-              >
-                <div className="flex items-center justify-between text-[13px] text-[#4F5C67]">
-                  <span>Pending QC</span>
-                  <ClipboardCheck className="h-4 w-4 text-[#4F5C67] group-hover:text-[#D4652F]" aria-hidden="true" />
-                </div>
-                <div className="mt-1.5 text-[22px] leading-[28px] font-bold text-[#1B2A4A] tabular-nums">
-                  {pendingQcCount}
-                </div>
-                <div className="mt-0.5 text-[12px] text-[#4F5C67]">Awaiting inspection</div>
-              </Link>
-
-              <Link
-                to={`${routes.workListPath}?filter=open`}
-                className="group rounded-xl border border-[#D9DEE2] bg-white p-4 transition-colors hover:border-[#D4652F]"
-              >
-                <div className="flex items-center justify-between text-[13px] text-[#4F5C67]">
-                  <span>Blocked work</span>
-                  <ShieldAlert className="h-4 w-4 text-[#4F5C67] group-hover:text-[#D4652F]" aria-hidden="true" />
-                </div>
-                <div className="mt-1.5 text-[22px] leading-[28px] font-bold text-[#1B2A4A] tabular-nums">
-                  {blockedCount}
-                </div>
-                <div className="mt-0.5 text-[12px] text-[#4F5C67]">Needs resolution</div>
-              </Link>
-
-              <Link
-                to={`${routes.workListPath}?filter=exceptions`}
-                className="group col-span-2 rounded-xl border border-[#D9DEE2] bg-white p-4 transition-colors hover:border-[#D4652F] sm:col-span-1"
-              >
-                <div className="flex items-center justify-between text-[13px] text-[#4F5C67]">
-                  <span>Material exceptions</span>
-                  <PackageOpen className="h-4 w-4 text-[#D4652F]" aria-hidden="true" />
-                </div>
-                <div className="mt-1.5 text-[22px] leading-[28px] font-bold text-[#1B2A4A] tabular-nums">
-                  {materialExceptionCount}
-                </div>
-                <div className="mt-0.5 text-[12px] text-[#4F5C67]">Open shortages</div>
-              </Link>
-            </section>
+            {/* Static 5-Tile Compact Near-Square Operational Summary Row */}
+            <OverviewKpiRow items={kpiItems} />
 
             {/* Operational Charts: 3 Stable Fixed-Height Plot Cards */}
-            <div className="mt-6">
+            <div className="mt-7">
               <DepartmentDashboardSection
                 pins={pins}
                 departments={departments}
@@ -503,6 +420,7 @@ export function PrivateProjectOverviewPage() {
                 accountingHref={routes.modulePath('accounting')}
                 canAddDepartment={false}
                 projectTimezone={project.timezone || 'Asia/Makassar'}
+                liveSourceNotice="Live project budget ledger and custom department APIs are not connected yet. Default departments reflect truthful unallocated balances with no sample figures."
               />
             </div>
 

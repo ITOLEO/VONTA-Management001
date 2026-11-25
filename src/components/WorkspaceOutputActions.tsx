@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import {
   AlertCircle,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   Download,
   ExternalLink,
@@ -14,6 +16,7 @@ import {
   X,
 } from 'lucide-react';
 import type { SpatialViewportHandle } from './SpatialViewport3D';
+import { resolveWorkspaceOutputVisibility } from '../domain/workspaceControls';
 
 export type ShareAccessMode = 'restricted' | 'anyone_with_link';
 
@@ -71,6 +74,8 @@ export function WorkspaceOutputActions({
   onUpdateShareAccess,
   onRevokeShareLink,
 }: WorkspaceOutputActionsProps) {
+  const visibility = resolveWorkspaceOutputVisibility({ canDownload, canShare });
+  const [expanded, setExpanded] = useState(true);
   const [downloading, setDownloading] = useState(false);
   const [downloadSuccess, setDownloadSuccess] = useState<string | null>(null);
   const [outputError, setOutputError] = useState<string | null>(null);
@@ -83,7 +88,7 @@ export function WorkspaceOutputActions({
   const [revokedNotice, setRevokedNotice] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  if (!canDownload && !canShare) {
+  if (!visibility.showToggle) {
     return null;
   }
 
@@ -226,37 +231,67 @@ export function WorkspaceOutputActions({
   };
 
   return (
-    <div className="pointer-events-auto flex flex-col items-end gap-1.5">
-      <div className="flex items-center gap-1.5 rounded-xl border border-[#D9DEE2] bg-white/95 p-1 shadow-sm backdrop-blur">
-        {canDownload && (
-          <button
-            type="button"
-            disabled={downloading}
-            data-testid="workspace-download-view-btn"
-            onClick={() => void handleDownloadView()}
-            className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium text-[#1B2A4A] transition-colors hover:bg-[#F4F3EF] disabled:opacity-50"
+    <div
+      data-testid="workspace-output-actions"
+      data-expanded={expanded ? 'true' : 'false'}
+      className="pointer-events-auto flex flex-col items-end gap-1.5"
+    >
+      <div className="flex items-center gap-1">
+        {expanded && (
+          <div
+            data-testid="workspace-output-tray"
+            className="flex items-center gap-1.5 rounded-xl border border-[#D9DEE2] bg-white/95 p-1 shadow-sm backdrop-blur"
           >
-            <Download className="h-3.5 w-3.5 text-[#A64011]" aria-hidden="true" />
-            <span>{downloading ? 'Exporting…' : 'Download view'}</span>
-          </button>
+            {visibility.showDownload && (
+              <button
+                type="button"
+                disabled={downloading}
+                data-testid="workspace-download-view-btn"
+                onClick={() => void handleDownloadView()}
+                className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium text-[#1B2A4A] transition-colors hover:bg-[#F4F3EF] disabled:opacity-50"
+              >
+                <Download className="h-3.5 w-3.5 text-[#A64011]" aria-hidden="true" />
+                <span>{downloading ? 'Exporting…' : 'Download view'}</span>
+              </button>
+            )}
+
+            {visibility.showDownload && visibility.showShare && (
+              <div className="h-5 w-px bg-[#D9DEE2]" aria-hidden="true" />
+            )}
+
+            {visibility.showShare && (
+              <button
+                type="button"
+                disabled={sharing}
+                data-testid="workspace-share-view-btn"
+                onClick={() => void handleOpenShareModal()}
+                className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium text-[#1B2A4A] transition-colors hover:bg-[#F4F3EF] disabled:opacity-50"
+              >
+                <Share2 className="h-3.5 w-3.5 text-[#1B2A4A]" aria-hidden="true" />
+                <span>{sharing ? 'Creating link…' : 'Share view'}</span>
+              </button>
+            )}
+          </div>
         )}
 
-        {canDownload && canShare && (
-          <div className="h-5 w-px bg-[#D9DEE2]" aria-hidden="true" />
-        )}
-
-        {canShare && (
-          <button
-            type="button"
-            disabled={sharing}
-            data-testid="workspace-share-view-btn"
-            onClick={() => void handleOpenShareModal()}
-            className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium text-[#1B2A4A] transition-colors hover:bg-[#F4F3EF] disabled:opacity-50"
-          >
-            <Share2 className="h-3.5 w-3.5 text-[#1B2A4A]" aria-hidden="true" />
-            <span>{sharing ? 'Creating link…' : 'Share view'}</span>
-          </button>
-        )}
+        {/* Small right-edge arrow toggle to show or hide Download view / Share view */}
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          aria-label={
+            expanded ? 'Hide Download and Share actions' : 'Show Download and Share actions'
+          }
+          title={expanded ? 'Hide view output actions' : 'Show view output actions'}
+          data-testid="workspace-output-toggle"
+          className="inline-flex h-[40px] w-7 items-center justify-center rounded-l-lg rounded-r-md border border-[#D9DEE2] bg-white/95 text-[#4F5C67] shadow-sm backdrop-blur transition-colors hover:bg-[#F4F3EF] hover:text-[#1B2A4A] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE]"
+        >
+          {expanded ? (
+            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+          ) : (
+            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+          )}
+        </button>
       </div>
 
       {downloadSuccess && (

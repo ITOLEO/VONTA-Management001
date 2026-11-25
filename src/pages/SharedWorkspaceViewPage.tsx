@@ -7,6 +7,7 @@ import {
   Lock,
   MapPin,
   ShieldAlert,
+  X,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { useDemo } from '../context/DemoContext';
@@ -65,6 +66,46 @@ export const SharedWorkspaceViewPage: React.FC<{ demoMode?: boolean }> = ({
   const [cameraCommand, setCameraCommand] = useState<CameraFocusCommand | null>(null);
   const [cameraAzimuthDeg, setCameraAzimuthDeg] = useState(0);
   const [showGroundCompass, setShowGroundCompass] = useState(false);
+  const pinCardRef = useRef<HTMLElement | null>(null);
+  const pinCardOpenerRef = useRef<HTMLElement | null>(null);
+  const prevPinCardOpenRef = useRef(false);
+
+  useEffect(() => {
+    const isOpen = Boolean(selectedPinId);
+    const wasOpen = prevPinCardOpenRef.current;
+    prevPinCardOpenRef.current = isOpen;
+
+    if (isOpen && !wasOpen) {
+      const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (active && active !== document.body && !pinCardRef.current?.contains(active)) {
+        pinCardOpenerRef.current = active;
+      }
+      const raf = window.requestAnimationFrame(() => {
+        pinCardRef.current?.focus({ preventScroll: true });
+      });
+      return () => window.cancelAnimationFrame(raf);
+    }
+
+    if (!isOpen && wasOpen) {
+      const opener = pinCardOpenerRef.current;
+      pinCardOpenerRef.current = null;
+      if (opener && opener.isConnected) {
+        window.requestAnimationFrame(() => opener.focus({ preventScroll: true }));
+      }
+    }
+  }, [selectedPinId]);
+
+  useEffect(() => {
+    if (!selectedPinId) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setSelectedPinId(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedPinId]);
 
   // Anonymous visitor simulation toggle for demo verification (`?visitor=anonymous`)
   const asAnonymousVisitor = searchParams.get('visitor') === 'anonymous';
@@ -398,27 +439,39 @@ export const SharedWorkspaceViewPage: React.FC<{ demoMode?: boolean }> = ({
           </div>
         </div>
 
-        {/* Allowlisted read-only Pin summary drawer (no edit actions, no worker/budget/evidence leaks) */}
+        {/* Allowlisted read-only Pin summary overlay (no edit actions, no worker/budget/evidence leaks) */}
         {selectedPin && (
           <aside
+            ref={pinCardRef}
+            tabIndex={-1}
             aria-label="Read-only Pin summary"
             data-testid="shared-viewer-pin-card"
-            className="w-[300px] shrink-0 border-l border-[#D9DEE2] bg-white p-4"
+            className="fixed inset-x-0 bottom-0 z-30 max-h-[60dvh] overflow-y-auto rounded-t-2xl border-t border-[#D9DEE2] bg-white p-4 shadow-xl outline-none md:absolute md:inset-y-0 md:right-0 md:left-auto md:bottom-auto md:z-30 md:h-full md:max-h-none md:w-[320px] md:rounded-none md:border-l md:border-t-0 md:shadow-2xl"
           >
-            <div className="flex items-start gap-2">
-              <span
-                className="mt-1 h-3 w-3 shrink-0 rounded-full"
-                style={{ backgroundColor: resolvePinColorHex(selectedPin.color) }}
-              />
-              <div>
-                <h2 className="text-[15px] font-semibold text-[#1B2A4A]">{selectedPin.title}</h2>
-                <div className="mt-1 flex items-center gap-1.5 text-[12px] text-[#4F5C67]">
-                  <MapPin className="h-3.5 w-3.5 text-[#D4652F]" aria-hidden="true" />
-                  <span>
-                    {selectedPin.roomName} · {selectedPin.department}
-                  </span>
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex items-start gap-2">
+                <span
+                  className="mt-1 h-3 w-3 shrink-0 rounded-full"
+                  style={{ backgroundColor: resolvePinColorHex(selectedPin.color) }}
+                />
+                <div>
+                  <h2 className="text-[15px] font-semibold text-[#1B2A4A]">{selectedPin.title}</h2>
+                  <div className="mt-1 flex items-center gap-1.5 text-[12px] text-[#4F5C67]">
+                    <MapPin className="h-3.5 w-3.5 text-[#D4652F]" aria-hidden="true" />
+                    <span>
+                      {selectedPin.roomName} · {selectedPin.department}
+                    </span>
+                  </div>
                 </div>
               </div>
+              <button
+                type="button"
+                onClick={() => setSelectedPinId(null)}
+                aria-label="Close read-only Pin summary"
+                className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-[#4F5C67] hover:bg-[#F4F3EF]"
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
             </div>
             <p className="mt-3 rounded-lg border border-[#D9DEE2] bg-[#F4F3EF]/60 p-2.5 text-[12px] text-[#4F5C67]">
               Viewer-only mode. Editing, QC actions, material requests, and private records are

@@ -1,14 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
-import {
-  ArrowLeft,
-  Box,
-  CheckCircle2,
-  ClipboardCheck,
-  Layers,
-  PackageOpen,
-  ShieldAlert,
-} from 'lucide-react';
+import { ArrowLeft, Box } from 'lucide-react';
 import { useDemo } from '../context/DemoContext';
 import { useDemoAddendum } from '../context/DemoAddendumContext';
 import { filterBlueprintSheets } from '../domain/blueprintRegister';
@@ -16,11 +8,13 @@ import { ProjectNavbar } from '../components/ProjectNavbar';
 import { ContextualRail } from '../components/ContextualRail';
 import { OverviewBlueprintHub } from '../components/OverviewBlueprintHub';
 import { OverviewBlueprintRailSlot } from '../components/OverviewBlueprintRailSlot';
+import { OverviewKpiRow } from '../components/OverviewKpiRow';
 import { BlueprintLightboxModal } from '../components/BlueprintLightboxModal';
 import { DepartmentDashboardSection } from '../components/DepartmentDashboardSection';
 import { BudgetDashboardSection } from '../components/BudgetDashboardSection';
 import { getProjectRoutes } from '../utils/projectRoutes';
 import { buildOverviewRailGroups } from '../utils/moduleNavConfig';
+import { buildDemoOverviewKpis } from '../utils/overviewKpis';
 
 export function ProjectOverviewPage() {
   const { project: projectParam } = useParams();
@@ -91,13 +85,17 @@ export function ProjectOverviewPage() {
   const missingEvidenceCount = state.pins.filter(
     (p) => !p.evidence.before || !p.evidence.after
   ).length;
-  const blockedCount = state.pins.filter(
-    (p) =>
-      (p.status === 'open' || p.status === 'in_progress') &&
-      (!p.evidence.before ||
-        !p.evidence.after ||
-        p.materials.some((m) => m.issuedQty < m.requiredQty))
-  ).length;
+  const kpiItems = buildDemoOverviewKpis({
+    approvedCount: summary.approvedCount,
+    totalPins: summary.totalPins,
+    verifiedProgressPercent: summary.verifiedProgressPercent,
+    areaCount: state.areas.length,
+    pendingReviewCount: summary.pendingReviewCount,
+    materialExceptionCount: summary.materialExceptionCount,
+    totalIssuedLines: summary.totalIssuedLines,
+    totalMaterialLines: summary.totalMaterialLines,
+    pins: state.pins,
+  });
 
   return (
     <div className="min-h-dvh flex flex-col bg-[#F4F3EF] text-[#1B2A4A]">
@@ -122,7 +120,7 @@ export function ProjectOverviewPage() {
         />
 
         <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8">
-          <div className="mx-auto w-full max-w-[1360px]">
+          <div className="w-full">
             {storageWarning && (
               <div
                 role="status"
@@ -133,8 +131,8 @@ export function ProjectOverviewPage() {
             )}
 
             {/* Upper Band: Left Context & Open Workspace | Right Whole-Building Summary + Department Strip */}
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-12 lg:items-stretch">
-              <div className="flex flex-col gap-5 lg:col-span-5">
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(300px,350px)_minmax(0,1fr)] lg:items-stretch xl:grid-cols-[minmax(320px,380px)_minmax(0,1fr)]">
+              <div className="flex min-w-0 flex-col gap-5">
                 <section className="flex flex-1 flex-col justify-between rounded-xl border border-[#D9DEE2] bg-white p-6">
                   <div>
                     <div className="flex flex-wrap items-center justify-between gap-2 text-[13px] leading-[18px]">
@@ -142,12 +140,9 @@ export function ProjectOverviewPage() {
                         {state.project.roleLabel} · {state.project.sheetCode}{' '}
                         {state.project.sheetRevision}
                       </span>
-                      <span className="rounded bg-[#FFF3EB] px-2 py-0.5 font-semibold text-[#A64011]">
-                        {state.project.demoLabel}
-                      </span>
                     </div>
 
-                    <h1 className="mt-2 text-[26px] leading-[32px] font-bold tracking-tight text-[#1B2A4A]">
+                    <h1 className="vonta-page-title mt-2 text-[#1B2A4A]">
                       {state.project.name}
                     </h1>
                     <p className="mt-1 text-[15px] leading-[22px] text-[#4F5C67]">
@@ -210,7 +205,7 @@ export function ProjectOverviewPage() {
               </div>
 
               {/* Right Column: Whole-Building Summary + Side Elevation + Horizontal Department Strip */}
-              <div className="lg:col-span-7">
+              <div className="min-w-0">
                 <OverviewBlueprintHub
                   wholeBuilding={buildingSummary.wholeBuilding}
                   departmentStrip={buildingSummary.departmentStrip}
@@ -239,106 +234,11 @@ export function ProjectOverviewPage() {
               }}
             />
 
-            {/* Compact 5-Tile Operational Summary Row */}
-            <section
-              aria-label="Operational summary"
-              className="mt-6 grid grid-cols-2 gap-3.5 sm:grid-cols-3 lg:grid-cols-5"
-            >
-              <Link
-                to={`${routes.workListPath}?filter=approved`}
-                className="group rounded-xl border border-[#D9DEE2] bg-white p-4 transition-colors hover:border-[#D4652F]"
-              >
-                <div className="flex items-center justify-between text-[13px] leading-[18px] text-[#4F5C67]">
-                  <span>Verified progress</span>
-                  <CheckCircle2
-                    className="h-4 w-4 shrink-0 text-[#4F5C67] group-hover:text-[#D4652F]"
-                    aria-hidden="true"
-                  />
-                </div>
-                <div className="mt-1.5 text-[22px] leading-[28px] font-bold text-[#1B2A4A] tabular-nums">
-                  {summary.approvedCount}/{summary.totalPins}
-                </div>
-                <div className="mt-0.5 text-[12px] leading-[16px] text-[#4F5C67] tabular-nums">
-                  {summary.verifiedProgressPercent}% approved
-                </div>
-              </Link>
-
-              <Link
-                to={routes.workspacePath}
-                className="group rounded-xl border border-[#D9DEE2] bg-white p-4 transition-colors hover:border-[#D4652F]"
-              >
-                <div className="flex items-center justify-between text-[13px] leading-[18px] text-[#4F5C67]">
-                  <span>Stage readiness</span>
-                  <Layers
-                    className="h-4 w-4 shrink-0 text-[#4F5C67] group-hover:text-[#D4652F]"
-                    aria-hidden="true"
-                  />
-                </div>
-                <div className="mt-1.5 text-[22px] leading-[28px] font-bold text-[#1B2A4A] tabular-nums">
-                  {state.areas.length}/{state.areas.length}
-                </div>
-                <div className="mt-0.5 text-[12px] leading-[16px] text-[#4F5C67]">
-                  Area model calibrated
-                </div>
-              </Link>
-
-              <Link
-                to={`${routes.workListPath}?filter=pending-qc`}
-                className="group rounded-xl border border-[#D9DEE2] bg-white p-4 transition-colors hover:border-[#D4652F]"
-              >
-                <div className="flex items-center justify-between text-[13px] leading-[18px] text-[#4F5C67]">
-                  <span>Pending QC</span>
-                  <ClipboardCheck
-                    className="h-4 w-4 shrink-0 text-[#4F5C67] group-hover:text-[#D4652F]"
-                    aria-hidden="true"
-                  />
-                </div>
-                <div className="mt-1.5 text-[22px] leading-[28px] font-bold text-[#1B2A4A] tabular-nums">
-                  {summary.pendingReviewCount}
-                </div>
-                <div className="mt-0.5 text-[12px] leading-[16px] text-[#4F5C67]">
-                  {summary.pendingReviewCount === 0 ? 'None waiting' : 'Awaiting review'}
-                </div>
-              </Link>
-
-              <Link
-                to={`${routes.workListPath}?filter=open`}
-                className="group rounded-xl border border-[#D9DEE2] bg-white p-4 transition-colors hover:border-[#D4652F]"
-              >
-                <div className="flex items-center justify-between text-[13px] leading-[18px] text-[#4F5C67]">
-                  <span>Blocked work</span>
-                  <ShieldAlert
-                    className="h-4 w-4 shrink-0 text-[#4F5C67] group-hover:text-[#D4652F]"
-                    aria-hidden="true"
-                  />
-                </div>
-                <div className="mt-1.5 text-[22px] leading-[28px] font-bold text-[#1B2A4A] tabular-nums">
-                  {blockedCount}
-                </div>
-                <div className="mt-0.5 text-[12px] leading-[16px] text-[#4F5C67]">
-                  {missingEvidenceCount} missing photos
-                </div>
-              </Link>
-
-              <Link
-                to={`${routes.workListPath}?filter=exceptions`}
-                className="group col-span-2 rounded-xl border border-[#D9DEE2] bg-white p-4 transition-colors hover:border-[#D4652F] sm:col-span-1"
-              >
-                <div className="flex items-center justify-between text-[13px] leading-[18px] text-[#4F5C67]">
-                  <span>Material exceptions</span>
-                  <PackageOpen className="h-4 w-4 shrink-0 text-[#D4652F]" aria-hidden="true" />
-                </div>
-                <div className="mt-1.5 text-[22px] leading-[28px] font-bold text-[#1B2A4A] tabular-nums">
-                  {summary.materialExceptionCount}
-                </div>
-                <div className="mt-0.5 text-[12px] leading-[16px] text-[#4F5C67] tabular-nums">
-                  {summary.totalIssuedLines}/{summary.totalMaterialLines} lines issued
-                </div>
-              </Link>
-            </section>
+            {/* Static 5-Tile Compact Near-Square Operational Summary Row */}
+            <OverviewKpiRow items={kpiItems} />
 
             {/* Operational Charts: 3 Stable Fixed-Height Plot Cards */}
-            <div className="mt-6">
+            <div className="mt-7">
               <DepartmentDashboardSection
                 pins={state.pins}
                 departments={departments}

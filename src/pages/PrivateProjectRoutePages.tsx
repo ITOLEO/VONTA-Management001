@@ -8,6 +8,7 @@ import {
   Calendar,
   Columns3,
   Crosshair,
+  Focus,
   Info,
   Layers,
   List as ListIcon,
@@ -41,29 +42,28 @@ import { WorkspaceOutputActions } from '../components/WorkspaceOutputActions';
 import { WorkspaceCompassWidget } from '../components/WorkspaceCompassWidget';
 import { RoomsPicker } from '../components/RoomsPicker';
 import { DepartmentPicker } from '../components/DepartmentPicker';
+import { WorkspaceLayersPicker } from '../components/WorkspaceLayersPicker';
 import {
   SpatialViewport3D,
   type CameraFocusCommand,
-  type PrivateAnnotationDraft,
   type SpatialViewportHandle,
 } from '../components/SpatialViewport3D';
 import { AddRoomBoundaryModal } from '../components/AddRoomBoundaryModal';
 import { BlueprintReviewStudio } from '../components/BlueprintReviewStudio';
 import { getProjectRoutes } from '../utils/projectRoutes';
-import { seedDefaultDepartments } from '../domain/departmentCatalog';
 import type { DrawingLineStyle } from '../domain/workspaceMath';
 import {
-  PRIVATE_DRAWING_FORMAT_VERSION,
-  clearPrivateAnnotationsForScope,
-  deletePrivateAnnotation,
+  buildWorkspaceGeometryLayerCatalog,
+  isAllPinsFilterClear,
+  resetWorkspacePinFilters,
+  type GeometryLayerKey,
+} from '../domain/workspaceControls';
+import {
   isCursorModeTool,
-  loadPrivateAnnotations,
-  savePrivateAnnotation,
-  type DrawingStorageMode,
   type DrawingStrokeWidthKey,
   type DrawingToolType,
-  type PrivateSurfaceAnnotation,
 } from '../utils/privateDrawingStore';
+import { usePrivateAnnotations } from '../hooks/usePrivateAnnotations';
 import {
   ACCOUNTING_VIEWS,
   buildAccountingRailGroups,
@@ -74,11 +74,16 @@ import {
   resolveModuleFromSlug,
 } from '../utils/moduleNavConfig';
 import {
+  buildRoomOptionsFromPins,
+  computePinStatusCounts,
+  describeActivePinFilters,
   filterPinsForBoard,
   getPinUpdatedIso,
   groupPinsForKanban,
   resolvePinDisplayColor,
+  resolveProjectPinDepartments,
   toProjectLocalDateKey,
+  type PinBoardFilters,
 } from '../domain/pinBoard';
 import { formatStatusLabel, pinHasMaterialException } from '../domain/demoStore';
 import type { PinWorkStatus } from '../domain/types';
@@ -96,8 +101,8 @@ const MODULE_TITLES: Record<string, string> = {
 
 const DEFAULT_LAYERS: Record<LayerKey, boolean> = {
   civil: true,
-  electrical: true,
-  plumbing: true,
+  electrical: false,
+  plumbing: false,
   pins: true,
 };
 
@@ -178,6 +183,8 @@ export function PrivateSpatialWorkspacePage() {
   const [activeDepartmentFilter, setActiveDepartmentFilter] = useState<string | null>(null);
   const [roomsPickerOpen, setRoomsPickerOpen] = useState(false);
   const [departmentPickerOpen, setDepartmentPickerOpen] = useState(false);
+  const [layersPickerOpen, setLayersPickerOpen] = useState(false);
+  const [layerNotice, setLayerNotice] = useState<string | null>(null);
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
   const [selectedElementId, setSelectedElementId] = useState<string | null>(null);
   const [createMode, setCreateMode] = useState(false);
@@ -188,8 +195,7 @@ export function PrivateSpatialWorkspacePage() {
   const [showGroundCompass, setShowGroundCompass] = useState(false);
   const [layers, setLayers] = useState<Record<LayerKey, boolean>>(DEFAULT_LAYERS);
 
-  // Private device-local 3D drawings (v2)
-  const [annotations, setAnnotations] = useState<PrivateSurfaceAnnotation[]>([]);
+  // Private device-local 3D drawing tool preferences (separate from server-saved Pin color)
   const [activeDrawingTool, setActiveDrawingTool] = useState<DrawingToolType>('cursor');
   const [drawingColorHex, setDrawingColorHex] = useState<string>('#E11D48');
   const [drawingStrokeWidth, setDrawingStrokeWidth] = useState<DrawingStrokeWidthKey>('medium');
@@ -199,12 +205,8 @@ export function PrivateSpatialWorkspacePage() {
   const [hideLocalDrawings, setHideLocalDrawings] = useState<boolean>(
     () => searchParams.get('hideLocalDrawings') === '1'
   );
-  const [drawingStorageMode, setDrawingStorageMode] = useState<DrawingStorageMode>('indexeddb');
-  const [drawingStorageWarning, setDrawingStorageWarning] = useState<string | null>(null);
-  const [drawingRejectedNotice, setDrawingRejectedNotice] = useState<string | null>(null);
 
   const routes = useMemo(() => getProjectRoutes('/projects', projectId), [projectId]);
-  const projectDepartments = useMemo(() => seedDefaultDepartments(projectId || 'live'), [projectId]);
 
   // Add Area & Add Room modals
   const [addAreaModalOpen, setAddAreaModalOpen] = useState(false);
@@ -226,6 +228,11 @@ export function PrivateSpatialWorkspacePage() {
   const projectAreas = project?.areas ?? [];
   const modelVersions = project?.modelVersions ?? [];
   const allPins = project?.pins ?? [];
+
+  const projectDepartments = useMemo(
+    () => resolveProjectPinDepartments(projectId || 'live', project?.departments, allPins),
+    [projectId, project?.departments, allPins]
+  );
 
   // Default to first area with a published model (or first area)
   useEffect(() => {
@@ -309,8 +316,57 @@ export function PrivateSpatialWorkspacePage() {
   const allAreasRegistered =
     projectAreas.length > 0 && projectAreas.every((a) => a.isRegisteredInCommonFrame);
 
-  const triggerCamera = (kind: CameraFocusCommand['kind'], roomId?: RoomId) => {
-    setCameraCommand({ id: Date.now(), kind, roomId });
+  const geometryLayerCatalog = useMemo(
+    () =>
+      buildWorkspaceGeometryLayerCatalog(
+        activeModelVersion
+          ? `sheet ${activeModelVersion.sheetCode} ${activeModelVersion.revision}`
+          : null
+      ),
+    [activeModelVersion]
+  );
+
+  const isAllPinFilterClear = isAllPinsFilterClear({
+    activeRoomId,
+    activeDepartmentFilter,
+    selectedPinId,
+    layers,
+  });
+
+  const triggerCamera = (
+    kind: CameraFocusCommand['kind'],
+    roomId?: RoomId,
+    pin?: typeof selectedPin
+  ) => {
+    setCameraCommand({ id: Date.now(), kind, roomId, pin: pin ?? undefined });
+  };
+
+  const handleResetAllPinFilters = () => {
+    const reset = resetWorkspacePinFilters({
+      activeRoomId,
+      activeDepartmentFilter,
+      selectedPinId,
+      layers,
+    });
+    setActiveRoomId(reset.activeRoomId);
+    setActiveDepartmentFilter(reset.activeDepartmentFilter);
+    setSelectedPinId(reset.selectedPinId);
+    setSelectedElementId(null);
+    setLayers((prev) => ({ ...prev, pins: true }));
+    triggerCamera('overall');
+  };
+
+  const handleToggleGeometryLayer = (key: GeometryLayerKey) => {
+    const descriptor = geometryLayerCatalog.find((item) => item.key === key);
+    setLayers((prev) => {
+      const nextVal = !prev[key];
+      if (nextVal && descriptor && !descriptor.available && descriptor.unavailableNotice) {
+        setLayerNotice(descriptor.unavailableNotice);
+      } else {
+        setLayerNotice(null);
+      }
+      return { ...prev, [key]: nextVal };
+    });
   };
 
   const handleSelectArea = (nextAreaId: string) => {
@@ -373,29 +429,41 @@ export function PrivateSpatialWorkspacePage() {
     [user?.id, project?.id, activeModelVersion?.id, activeArea?.id]
   );
 
-  // Immediately clear in-memory marks on account/project/model/area/permission change, then hydrate scoped IndexedDB marks
-  useEffect(() => {
-    setAnnotations([]);
-    setActiveDrawingTool('cursor');
-    setDrawingDeleteMode(false);
-    setDrawingRejectedNotice(null);
-
-    if (!canDraw || !drawingScope) {
-      setDrawingStorageWarning(null);
-      return;
+  const handleToolActivatedFromShortcut = useCallback((tool: DrawingToolType) => {
+    if (!isCursorModeTool(tool)) {
+      setCreateMode(false);
+      setPendingHit(null);
+      setHideLocalDrawings(false);
     }
+  }, []);
 
-    let cancelled = false;
-    void loadPrivateAnnotations(drawingScope).then((res) => {
-      if (cancelled) return;
-      setAnnotations(res.data);
-      setDrawingStorageMode(res.storageMode);
-      setDrawingStorageWarning(res.warning);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [drawingScope, canDraw]);
+  const {
+    annotations,
+    selectedAnnotationId,
+    selectedAnnotation,
+    canUndo,
+    canRedo,
+    undoCount,
+    redoCount,
+    storageMode: drawingStorageMode,
+    storageWarning: drawingStorageWarning,
+    rejectedNotice: drawingRejectedNotice,
+    setRejectedNotice: setDrawingRejectedNotice,
+    selectAnnotation,
+    createAnnotation: handleCreateAnnotation,
+    deleteAnnotation: handleDeleteAnnotation,
+    clearAllOwnAnnotations: handleClearAllOwnAnnotations,
+    undoAnnotation: handleUndoAnnotation,
+    redoAnnotation: handleRedoAnnotation,
+  } = usePrivateAnnotations({
+    scope: drawingScope,
+    canDraw,
+    activeTool: activeDrawingTool,
+    setActiveTool: setActiveDrawingTool,
+    deleteMode: drawingDeleteMode,
+    setDeleteMode: setDrawingDeleteMode,
+    onToolActivated: handleToolActivatedFromShortcut,
+  });
 
   // Apply shared view hydration (E04–E06)
   const sharedStateAppliedRef = useRef<string | null>(null);
@@ -438,41 +506,18 @@ export function PrivateSpatialWorkspacePage() {
     }
   }, [searchParams, location.state]);
 
-  const handleCreateAnnotation = useCallback(
-    (draft: PrivateAnnotationDraft) => {
-      if (!canDraw || !drawingScope) return;
-      const annotation: PrivateSurfaceAnnotation = {
-        ...draft,
-        id: `mark-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
-        formatVersion: PRIVATE_DRAWING_FORMAT_VERSION,
-        ...drawingScope,
-        createdAt: new Date().toISOString(),
-      };
-      setAnnotations((prev) => [...prev, annotation]);
-      setDrawingRejectedNotice(null);
-      void savePrivateAnnotation(annotation).then((res) => {
-        setDrawingStorageMode(res.storageMode);
-        setDrawingStorageWarning(res.warning);
-      });
+  const handleSelectAnnotation = useCallback(
+    (annotationId: string | null) => {
+      if (annotationId) {
+        setCreateMode(false);
+        setPendingHit(null);
+        setSelectedPinId(null);
+        setSelectedElementId(null);
+      }
+      selectAnnotation(annotationId);
     },
-    [canDraw, drawingScope]
+    [selectAnnotation]
   );
-
-  const handleDeleteAnnotation = useCallback(
-    (annotationId: string) => {
-      if (!canDraw || !drawingScope) return;
-      setAnnotations((prev) => prev.filter((a) => a.id !== annotationId));
-      void deletePrivateAnnotation(drawingScope, annotationId);
-    },
-    [canDraw, drawingScope]
-  );
-
-  const handleClearAllOwnAnnotations = useCallback(() => {
-    if (!canDraw || !drawingScope) return;
-    setAnnotations([]);
-    setDrawingDeleteMode(false);
-    void clearPrivateAnnotationsForScope(drawingScope);
-  }, [canDraw, drawingScope]);
 
   const drawerPins = useMemo(() => {
     if (!activeRoomId) return activeAreaPins;
@@ -507,6 +552,54 @@ export function PrivateSpatialWorkspacePage() {
     ],
     [drawerPins.length, pinListOpen, modelInfoOpen]
   );
+
+  const privateInspectorOpen = Boolean(pendingHit || selectedPin || selectedElement);
+  const privateInspectorRef = useRef<HTMLElement | null>(null);
+  const privateInspectorOpenerRef = useRef<HTMLElement | null>(null);
+  const prevPrivateInspectorOpenRef = useRef(false);
+
+  useEffect(() => {
+    const wasOpen = prevPrivateInspectorOpenRef.current;
+    prevPrivateInspectorOpenRef.current = privateInspectorOpen;
+
+    if (privateInspectorOpen && !wasOpen) {
+      const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      if (active && active !== document.body && !privateInspectorRef.current?.contains(active)) {
+        privateInspectorOpenerRef.current = active;
+      }
+      const raf = window.requestAnimationFrame(() => {
+        privateInspectorRef.current?.focus({ preventScroll: true });
+      });
+      return () => window.cancelAnimationFrame(raf);
+    }
+
+    if (!privateInspectorOpen && wasOpen) {
+      const opener = privateInspectorOpenerRef.current;
+      privateInspectorOpenerRef.current = null;
+      const fallback =
+        document.querySelector<HTMLElement>('[data-testid="rail-item-pin-list"]') ??
+        document.querySelector<HTMLElement>('[data-testid="workspace-new-pin-btn"]');
+      const target = opener && opener.isConnected ? opener : fallback;
+      if (target) {
+        window.requestAnimationFrame(() => target.focus({ preventScroll: true }));
+      }
+    }
+  }, [privateInspectorOpen]);
+
+  useEffect(() => {
+    if (!privateInspectorOpen || addAreaModalOpen || addRoomModalOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
+        e.preventDefault();
+        setPendingHit(null);
+        setSelectedPinId(null);
+        setSelectedElementId(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [privateInspectorOpen, addAreaModalOpen, addRoomModalOpen]);
 
   if (requestedOverview) return null;
   if (error && !project) return <ForbiddenView message={error.message} />;
@@ -554,7 +647,7 @@ export function PrivateSpatialWorkspacePage() {
               <div className="mx-auto max-w-5xl space-y-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <h1 className="text-[24px] leading-[30px] font-bold text-[#1B2A4A]">
+                    <h1 className="vonta-page-title text-[#1B2A4A]">
                       All areas · {project.name}
                     </h1>
                     <p className="mt-1.5 text-[14px] text-[#4F5C67]">
@@ -676,7 +769,7 @@ export function PrivateSpatialWorkspacePage() {
             <div className="flex flex-1 items-center justify-center p-6">
               <div className="max-w-md rounded-xl border border-[#D9DEE2] bg-white p-8 text-center">
                 <Box className="mx-auto h-7 w-7 text-[#D4652F]" aria-hidden="true" />
-                <h1 className="mt-3 text-[20px] font-bold text-[#1B2A4A]">
+                <h1 className="vonta-page-title mt-3 text-[#1B2A4A]">
                   {activeArea ? `${activeArea.name} · No published model` : 'No published 3D model'}
                 </h1>
                 <p className="mt-2 text-[14px] leading-[20px] text-[#4F5C67]">
@@ -719,25 +812,30 @@ export function PrivateSpatialWorkspacePage() {
                   pendingHit={pendingHit}
                   cameraCommand={cameraCommand}
                   onSelectPin={(pinId) => {
+                    selectAnnotation(null);
                     setSelectedPinId(pinId);
                     setSelectedElementId(null);
                     setPendingHit(null);
                   }}
                   onSelectElement={(elementId) => {
+                    selectAnnotation(null);
                     setSelectedElementId(elementId);
                     setSelectedPinId(null);
                   }}
                   onClearSelection={() => {
+                    selectAnnotation(null);
                     setSelectedPinId(null);
                     setSelectedElementId(null);
                   }}
                   onCreateSurfaceHit={(hit) => {
+                    selectAnnotation(null);
                     setPendingHit(hit);
                     setVoidClickNotice(false);
                     setSelectedPinId(null);
                   }}
                   onCreateVoidClick={() => setVoidClickNotice(true)}
                   annotations={annotations}
+                  selectedAnnotationId={selectedAnnotationId}
                   activeDrawingTool={activeDrawingTool}
                   drawingColorHex={drawingColorHex}
                   drawingStrokeWidth={drawingStrokeWidth}
@@ -750,6 +848,7 @@ export function PrivateSpatialWorkspacePage() {
                   northAngleDeg={null}
                   showGroundCompass={showGroundCompass}
                   onCameraAzimuthChange={setCameraAzimuthDeg}
+                  onSelectAnnotation={handleSelectAnnotation}
                   onCreateAnnotation={handleCreateAnnotation}
                   onDeleteAnnotation={handleDeleteAnnotation}
                   onDrawingRejected={(reason) => setDrawingRejectedNotice(reason)}
@@ -764,6 +863,7 @@ export function PrivateSpatialWorkspacePage() {
                       setActiveDrawingTool(tool);
                       setDrawingRejectedNotice(null);
                       if (!isCursorModeTool(tool)) {
+                        selectAnnotation(null);
                         setCreateMode(false);
                         setPendingHit(null);
                         setHideLocalDrawings(false);
@@ -787,6 +887,19 @@ export function PrivateSpatialWorkspacePage() {
                     storageWarning={drawingStorageWarning}
                     rejectedNotice={drawingRejectedNotice}
                     isModelCalibrated={true}
+                    selectedAnnotation={selectedAnnotation}
+                    onDeleteSelectedAnnotation={() => {
+                      if (selectedAnnotationId) {
+                        void handleDeleteAnnotation(selectedAnnotationId);
+                      }
+                    }}
+                    onDeselectAnnotation={() => selectAnnotation(null)}
+                    canUndo={canUndo}
+                    canRedo={canRedo}
+                    undoCount={undoCount}
+                    redoCount={redoCount}
+                    onUndo={handleUndoAnnotation}
+                    onRedo={handleRedoAnnotation}
                   />
                 </div>
 
@@ -874,13 +987,10 @@ export function PrivateSpatialWorkspacePage() {
                         <button
                           type="button"
                           data-testid="pin-list-filter-all"
-                          aria-pressed={!activeRoomId}
-                          onClick={() => {
-                            setActiveRoomId(null);
-                            triggerCamera('overall');
-                          }}
+                          aria-pressed={isAllPinFilterClear}
+                          onClick={handleResetAllPinFilters}
                           className={`inline-flex min-h-[32px] items-center rounded-lg border px-2 text-[12px] font-semibold ${
-                            !activeRoomId
+                            isAllPinFilterClear
                               ? 'border-[#1B2A4A] bg-[#1B2A4A] text-white'
                               : 'border-[#D9DEE2] bg-white text-[#1B2A4A] hover:bg-[#F4F3EF]'
                           }`}
@@ -992,11 +1102,35 @@ export function PrivateSpatialWorkspacePage() {
                   </div>
                 )}
 
-                {/* Bottom Model Tools Dock (L02: Fit Model button removed) */}
-                <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center px-3">
-                  <div className="pointer-events-auto flex flex-wrap items-center gap-1.5 rounded-xl border border-[#D9DEE2] bg-white/95 p-1.5 shadow-lg backdrop-blur">
+                {layerNotice && (
+                  <div
+                    role="status"
+                    data-testid="private-workspace-layer-notice"
+                    className="pointer-events-auto absolute bottom-20 left-1/2 z-20 flex w-[min(460px,calc(100%-24px))] -translate-x-1/2 items-center justify-between gap-3 rounded-lg border border-[#D9DEE2] bg-white px-3.5 py-2 text-[12px] text-[#1B2A4A] shadow-md"
+                  >
+                    <span>{layerNotice}</span>
                     <button
                       type="button"
+                      onClick={() => setLayerNotice(null)}
+                      aria-label="Dismiss layer notice"
+                      className="rounded p-1 text-[#4F5C67] hover:bg-[#F4F3EF]"
+                    >
+                      <X className="h-3.5 w-3.5" aria-hidden="true" />
+                    </button>
+                  </div>
+                )}
+
+                {/* Bottom Model Tools Dock (Pin filters on left of 3D layers) */}
+                <div className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-center px-3">
+                  <div
+                    role="toolbar"
+                    aria-label="Camera, rooms, Pin filters, and 3D layers controls"
+                    data-testid="workspace-bottom-dock"
+                    className="pointer-events-auto flex flex-wrap items-center justify-center gap-1.5 rounded-xl border border-[#D9DEE2] bg-white/95 p-1.5 shadow-lg backdrop-blur"
+                  >
+                    <button
+                      type="button"
+                      data-testid="dock-overall-view-button"
                       onClick={() => {
                         setActiveRoomId(null);
                         triggerCamera('overall');
@@ -1016,7 +1150,10 @@ export function PrivateSpatialWorkspacePage() {
                       open={roomsPickerOpen}
                       onOpenChange={(next) => {
                         setRoomsPickerOpen(next);
-                        if (next) setDepartmentPickerOpen(false);
+                        if (next) {
+                          setDepartmentPickerOpen(false);
+                          setLayersPickerOpen(false);
+                        }
                       }}
                       onSelectRoom={(roomId) => {
                         setActiveRoomId(roomId);
@@ -1035,6 +1172,7 @@ export function PrivateSpatialWorkspacePage() {
 
                     <div className="h-5 w-px bg-[#D9DEE2]" aria-hidden="true" />
 
+                    {/* Pin filters popover (left of 3D layers) */}
                     <DepartmentPicker
                       departments={projectDepartments}
                       pins={allPins}
@@ -1042,31 +1180,64 @@ export function PrivateSpatialWorkspacePage() {
                       open={departmentPickerOpen}
                       onOpenChange={(next) => {
                         setDepartmentPickerOpen(next);
-                        if (next) setRoomsPickerOpen(false);
+                        if (next) {
+                          setRoomsPickerOpen(false);
+                          setLayersPickerOpen(false);
+                        }
                       }}
-                      onSelectDepartment={setActiveDepartmentFilter}
+                      onSelectDepartment={(deptName) => {
+                        setActiveDepartmentFilter(deptName);
+                        if (deptName) {
+                          setLayers((prev) => ({ ...prev, pins: true }));
+                        }
+                      }}
+                      showPinMarkers={layers.pins}
+                      onTogglePinMarkers={() =>
+                        setLayers((prev) => ({ ...prev, pins: !prev.pins }))
+                      }
+                      isAllPinsClear={isAllPinFilterClear}
+                      onResetAllPins={handleResetAllPinFilters}
+                      activeRoomName={
+                        activeRoomId
+                          ? activeModelVersion.geometry.rooms.find((r) => r.id === activeRoomId)
+                              ?.name ?? null
+                          : null
+                      }
                     />
+
+                    <div className="h-5 w-px bg-[#D9DEE2]" aria-hidden="true" />
+
+                    {/* 3D layers popover (right of Pin filters) */}
+                    <WorkspaceLayersPicker
+                      catalog={geometryLayerCatalog}
+                      layers={layers}
+                      open={layersPickerOpen}
+                      onOpenChange={(next) => {
+                        setLayersPickerOpen(next);
+                        if (next) {
+                          setRoomsPickerOpen(false);
+                          setDepartmentPickerOpen(false);
+                        }
+                      }}
+                      onToggleLayer={handleToggleGeometryLayer}
+                    />
+
+                    <div className="h-5 w-px bg-[#D9DEE2]" aria-hidden="true" />
 
                     <button
                       type="button"
-                      data-testid="dock-pin-filter-all"
-                      aria-pressed={!activeRoomId && !activeDepartmentFilter && !selectedPinId}
+                      data-testid="dock-pin-focus-button"
+                      disabled={!selectedPin}
                       onClick={() => {
-                        setActiveRoomId(null);
-                        setActiveDepartmentFilter(null);
-                        setSelectedPinId(null);
-                        triggerCamera('overall');
+                        if (selectedPin) {
+                          triggerCamera('pin', undefined, selectedPin);
+                        }
                       }}
-                      className={`inline-flex min-h-[38px] items-center rounded-lg px-2.5 text-[13px] font-medium transition-colors ${
-                        !activeRoomId && !activeDepartmentFilter && !selectedPinId
-                          ? 'bg-[#1B2A4A] text-white'
-                          : 'bg-[#F4F3EF] text-[#4F5C67] hover:text-[#1B2A4A]'
-                      }`}
+                      className="inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-[#D9DEE2] px-2.5 text-[13px] font-medium text-[#1B2A4A] hover:bg-[#F4F3EF] disabled:opacity-45"
                     >
-                      All
+                      <Focus className="h-3.5 w-3.5 text-[#D4652F]" aria-hidden="true" />
+                      Pin Focus
                     </button>
-
-                    <div className="h-5 w-px bg-[#D9DEE2]" aria-hidden="true" />
 
                     <button
                       type="button"
@@ -1074,24 +1245,33 @@ export function PrivateSpatialWorkspacePage() {
                         setCreateMode((v) => !v);
                         setPendingHit(null);
                         setVoidClickNotice(false);
+                        setRoomsPickerOpen(false);
+                        setDepartmentPickerOpen(false);
+                        setLayersPickerOpen(false);
                       }}
                       data-testid="workspace-new-pin-btn"
-                      className={`inline-flex min-h-[40px] items-center gap-1.5 rounded-lg px-3.5 text-[13px] font-semibold transition-colors ${
+                      className={`inline-flex min-h-[36px] min-w-[104px] items-center justify-center gap-1.5 rounded-lg px-2.5 text-[13px] font-semibold transition-colors ${
                         createMode
                           ? 'bg-[#1B2A4A] text-white'
                           : 'bg-[#A64011] text-white hover:bg-[#8C350E]'
                       }`}
                     >
                       <Crosshair className="h-4 w-4" aria-hidden="true" />
-                      {createMode ? 'Cancel Pin' : 'Add pin'}
+                      {createMode ? 'Cancel Pin' : 'Add Pin'}
                     </button>
                   </div>
                 </div>
               </div>
 
-              {/* Right Contextual Side Card (New Pin Form / Selected Pin / Selected Element) */}
-              {(pendingHit || selectedPin || selectedElement) && (
-                <aside className="w-[340px] shrink-0 overflow-y-auto border-l border-[#D9DEE2] bg-white p-5">
+              {/* Right Contextual Overlay Side Card (New Pin Form / Selected Pin / Selected Element) */}
+              {privateInspectorOpen && (
+                <aside
+                  ref={privateInspectorRef}
+                  tabIndex={-1}
+                  aria-label="Workspace Inspector"
+                  data-testid="private-workspace-right-inspector"
+                  className="fixed inset-x-0 bottom-0 z-30 max-h-[76dvh] overflow-y-auto rounded-t-2xl border-t border-[#D9DEE2] bg-white p-5 shadow-xl outline-none md:absolute md:inset-y-0 md:right-0 md:left-auto md:bottom-auto md:z-30 md:h-full md:max-h-none md:w-[360px] md:rounded-none md:border-l md:border-t-0 md:shadow-2xl"
+                >
                   {pendingHit ? (
                     <form onSubmit={handleCreatePinSubmit} className="space-y-4">
                       <div className="flex items-start justify-between gap-2">
@@ -1109,7 +1289,8 @@ export function PrivateSpatialWorkspacePage() {
                         <button
                           type="button"
                           onClick={() => setPendingHit(null)}
-                          className="rounded-lg p-1 text-[#4F5C67] hover:bg-[#F4F3EF]"
+                          aria-label="Close new surface Pin form"
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#4F5C67] hover:bg-[#F4F3EF]"
                         >
                           <X className="h-4 w-4" aria-hidden="true" />
                         </button>
@@ -1198,7 +1379,8 @@ export function PrivateSpatialWorkspacePage() {
                         <button
                           type="button"
                           onClick={() => setSelectedPinId(null)}
-                          className="rounded-lg p-1 text-[#4F5C67] hover:bg-[#F4F3EF]"
+                          aria-label="Close Pin inspector"
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#4F5C67] hover:bg-[#F4F3EF]"
                         >
                           <X className="h-4 w-4" aria-hidden="true" />
                         </button>
@@ -1254,7 +1436,8 @@ export function PrivateSpatialWorkspacePage() {
                         <button
                           type="button"
                           onClick={() => setSelectedElementId(null)}
-                          className="rounded-lg p-1 text-[#4F5C67] hover:bg-[#F4F3EF]"
+                          aria-label="Close building element inspector"
+                          className="inline-flex h-9 w-9 items-center justify-center rounded-lg text-[#4F5C67] hover:bg-[#F4F3EF]"
                         >
                           <X className="h-4 w-4" aria-hidden="true" />
                         </button>
@@ -1338,6 +1521,12 @@ export function PrivateWorkOrPinPage({ isPinDetail = false }: { isPinDetail?: bo
   );
   const [transitionNotice, setTransitionNotice] = useState<string | null>(null);
 
+  const viewParam = searchParams.get('view');
+  useEffect(() => {
+    const expected: 'list' | 'kanban' = viewParam === 'kanban' ? 'kanban' : 'list';
+    setViewMode((prev) => (prev === expected ? prev : expected));
+  }, [viewParam]);
+
   const rawFilter = searchParams.get('filter');
   const activeStatus: 'all' | PinWorkStatus =
     rawFilter === 'open' || rawFilter === 'in_progress' || rawFilter === 'approved'
@@ -1349,12 +1538,29 @@ export function PrivateWorkOrPinPage({ isPinDetail = false }: { isPinDetail?: bo
     searchParams.get('exceptions') === '1' ||
     rawFilter === 'exceptions' ||
     rawFilter === 'material_exceptions';
+  const activeRoomParam = searchParams.get('room') || '';
   const activeDeptIdParam = searchParams.get('dept') || 'all';
+  const projectTimezone = project?.timezone || 'Asia/Makassar';
+
+  const pins = project?.pins ?? [];
 
   const projectDepartments = useMemo(
-    () => seedDefaultDepartments(project?.id ?? projectId ?? 'private-project'),
-    [project?.id, projectId]
+    () =>
+      resolveProjectPinDepartments(
+        project?.id ?? projectId ?? 'private-project',
+        project?.departments,
+        pins
+      ),
+    [project?.id, projectId, project?.departments, pins]
   );
+
+  const roomOptions = useMemo(() => {
+    const modelRooms =
+      project?.modelVersions?.flatMap((mv) =>
+        (mv.geometry?.rooms ?? []).map((r) => ({ id: r.id, name: r.name }))
+      ) ?? [];
+    return buildRoomOptionsFromPins(modelRooms, pins);
+  }, [project?.modelVersions, pins]);
 
   const activeDepartment =
     activeDeptIdParam === 'all'
@@ -1366,8 +1572,6 @@ export function PrivateWorkOrPinPage({ isPinDetail = false }: { isPinDetail?: bo
             d.name.toLowerCase() === activeDeptIdParam.toLowerCase()
         ) ?? null;
 
-  const pins = project?.pins ?? [];
-
   const setDepartmentFilter = (deptId: string) => {
     const next = new URLSearchParams(searchParams);
     if (deptId === 'all') next.delete('dept');
@@ -1377,8 +1581,19 @@ export function PrivateWorkOrPinPage({ isPinDetail = false }: { isPinDetail?: bo
 
   const setStatusFilter = (nextStatus: 'all' | PinWorkStatus) => {
     const next = new URLSearchParams(searchParams);
-    if (nextStatus === 'all') next.delete('filter');
-    else next.set('filter', nextStatus);
+    if (nextStatus === 'all') {
+      if (next.get('filter') !== 'exceptions' && next.get('filter') !== 'material_exceptions') {
+        next.delete('filter');
+      } else {
+        next.delete('filter');
+        next.set('exceptions', '1');
+      }
+    } else {
+      if (next.get('filter') === 'exceptions' || next.get('filter') === 'material_exceptions') {
+        next.set('exceptions', '1');
+      }
+      next.set('filter', nextStatus);
+    }
     setSearchParams(next, { replace: true });
   };
 
@@ -1395,13 +1610,38 @@ export function PrivateWorkOrPinPage({ isPinDetail = false }: { isPinDetail?: bo
     setSearchParams(next, { replace: true });
   };
 
+  const setRoomFilter = (roomId: string) => {
+    const next = new URLSearchParams(searchParams);
+    if (!roomId) next.delete('room');
+    else next.set('room', roomId);
+    setSearchParams(next, { replace: true });
+  };
+
+  const handleViewModeChange = (nextMode: 'list' | 'kanban') => {
+    setViewMode(nextMode);
+    const next = new URLSearchParams(searchParams);
+    if (nextMode === 'kanban') next.set('view', 'kanban');
+    else next.delete('view');
+    setSearchParams(next, { replace: true });
+  };
+
+  const clearAllFilters = () => {
+    setQuery('');
+    setUpdatedFrom('');
+    setUpdatedTo('');
+    const next = new URLSearchParams();
+    if (viewMode === 'kanban') next.set('view', 'kanban');
+    setSearchParams(next, { replace: true });
+  };
+
   const pinRailGroups = useMemo(
     () =>
       buildPinDepartmentRailGroups({
         departments: projectDepartments.map((dept) => ({
           id: dept.id,
           name: dept.name,
-          pinCount: pins.filter((p) => p.department.toLowerCase() === dept.name.toLowerCase()).length,
+          pinCount: pins.filter((p) => p.department.toLowerCase() === dept.name.toLowerCase())
+            .length,
         })),
         activeDepartmentId: activeDepartment ? activeDepartment.id : 'all',
         onSelectDepartment: setDepartmentFilter,
@@ -1409,32 +1649,50 @@ export function PrivateWorkOrPinPage({ isPinDetail = false }: { isPinDetail?: bo
     [projectDepartments, pins, activeDepartment]
   );
 
-  const filteredPins = useMemo(
-    () =>
-      filterPinsForBoard(pins, {
-        departmentName: activeDepartment ? activeDepartment.name : 'all',
-        status: activeStatus,
-        materialExceptionOnly,
-        roomId: searchParams.get('room') || '',
-        query,
-        updatedFrom,
-        updatedTo,
-        timezone: project?.timezone || 'Asia/Jakarta',
-      }),
-    [
-      pins,
-      activeDepartment,
-      activeStatus,
+  const boardFilters = useMemo<PinBoardFilters>(
+    () => ({
+      departmentName: activeDepartment ? activeDepartment.name : 'all',
+      status: activeStatus,
       materialExceptionOnly,
-      searchParams,
+      roomId: activeRoomParam,
       query,
       updatedFrom,
       updatedTo,
-      project?.timezone,
+      timezone: projectTimezone,
+    }),
+    [
+      activeDepartment,
+      activeStatus,
+      materialExceptionOnly,
+      activeRoomParam,
+      query,
+      updatedFrom,
+      updatedTo,
+      projectTimezone,
     ]
   );
 
+  const statusCounts = useMemo(
+    () => computePinStatusCounts(pins, boardFilters),
+    [pins, boardFilters]
+  );
+
+  const filteredPins = useMemo(
+    () => filterPinsForBoard(pins, boardFilters),
+    [pins, boardFilters]
+  );
+
   const kanbanColumns = useMemo(() => groupPinsForKanban(filteredPins), [filteredPins]);
+
+  const activeRoomName =
+    roomOptions.find((room) => room.id === activeRoomParam)?.name ?? activeRoomParam;
+
+  const activeFilterLabels = useMemo(
+    () => describeActivePinFilters(boardFilters, { roomName: activeRoomName }),
+    [boardFilters, activeRoomName]
+  );
+
+  const hasActiveFilter = activeFilterLabels.length > 0;
 
   if (error && !project) return <ForbiddenView message={error.message} />;
 
@@ -1462,13 +1720,13 @@ export function PrivateWorkOrPinPage({ isPinDetail = false }: { isPinDetail?: bo
             projectSettingsPath={routes.settingsPath}
           />
         )}
-        <main className="min-w-0 flex-1 px-4 py-8 sm:px-6 lg:px-8">
-          <div className="mx-auto w-full max-w-[1280px]">
+        <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8">
+          <div className="w-full">
             {loading ? (
               <p className="text-[15px] text-[#4F5C67]">Loading…</p>
             ) : project ? (
-              <section className="rounded-xl border border-[#D9DEE2] bg-white p-6">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#D9DEE2] pb-4">
+              <div>
+                <div className="flex flex-wrap items-end justify-between gap-4 border-b border-[#D9DEE2] pb-5">
                   <div>
                     <Link
                       to={isPinDetail ? routes.pinListPath : routes.overviewPath}
@@ -1477,50 +1735,73 @@ export function PrivateWorkOrPinPage({ isPinDetail = false }: { isPinDetail?: bo
                       <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
                       {isPinDetail ? 'All project Pins' : 'Back to Overview'}
                     </Link>
-                    <h1 className="mt-1 text-[26px] leading-[32px] font-bold text-[#1B2A4A]">
-                      {isPinDetail ? (matchedPin?.title ?? `Pin · ${slug}`) : 'PIN'}
-                    </h1>
+                    <div className="mt-1 flex flex-wrap items-center gap-2.5">
+                      <h1 className="vonta-page-title text-[#1B2A4A]">
+                        {isPinDetail ? (matchedPin?.title ?? `Pin · ${slug}`) : 'PIN'}
+                      </h1>
+                      {!isPinDetail && activeDepartment && (
+                        <span
+                          data-testid="private-pin-active-department-badge"
+                          className="inline-flex items-center gap-1.5 rounded-md border border-[#D9DEE2] bg-white px-2.5 py-0.5 text-[13px] font-medium text-[#1B2A4A]"
+                        >
+                          <span
+                            className="h-2.5 w-2.5 rounded-full"
+                            style={{ backgroundColor: activeDepartment.defaultPinColor }}
+                            aria-hidden="true"
+                          />
+                          {activeDepartment.name}
+                        </span>
+                      )}
+                    </div>
+                    {!isPinDetail && (
+                      <p className="mt-1 text-[14px] leading-[20px] text-[#4F5C67]">
+                        Track surface-anchored Spatial Pins by department, QC stage, material
+                        status, and project-local update date ({projectTimezone}).
+                      </p>
+                    )}
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2.5">
                     {!isPinDetail && (
                       <div
                         role="group"
                         aria-label="PIN display mode"
-                        className="inline-flex rounded-lg border border-[#D9DEE2] bg-[#F4F3EF]/50 p-1"
+                        className="inline-flex rounded-lg border border-[#D9DEE2] bg-white p-1"
                       >
                         <button
                           type="button"
-                          onClick={() => setViewMode('list')}
+                          data-testid="private-pin-view-list"
+                          onClick={() => handleViewModeChange('list')}
                           aria-pressed={viewMode === 'list'}
-                          className={`inline-flex min-h-[34px] items-center gap-1.5 rounded-md px-3 text-[13px] font-semibold ${
+                          className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-md px-3 text-[13px] font-semibold transition-colors ${
                             viewMode === 'list'
                               ? 'bg-[#1B2A4A] text-white'
-                              : 'text-[#4F5C67] hover:text-[#1B2A4A]'
+                              : 'text-[#4F5C67] hover:bg-[#F4F3EF] hover:text-[#1B2A4A]'
                           }`}
                         >
-                          <ListIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                          <ListIcon className="h-4 w-4" aria-hidden="true" />
                           List
                         </button>
                         <button
                           type="button"
-                          onClick={() => setViewMode('kanban')}
+                          data-testid="private-pin-view-kanban"
+                          onClick={() => handleViewModeChange('kanban')}
                           aria-pressed={viewMode === 'kanban'}
-                          className={`inline-flex min-h-[34px] items-center gap-1.5 rounded-md px-3 text-[13px] font-semibold ${
+                          className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-md px-3 text-[13px] font-semibold transition-colors ${
                             viewMode === 'kanban'
                               ? 'bg-[#1B2A4A] text-white'
-                              : 'text-[#4F5C67] hover:text-[#1B2A4A]'
+                              : 'text-[#4F5C67] hover:bg-[#F4F3EF] hover:text-[#1B2A4A]'
                           }`}
                         >
-                          <Columns3 className="h-3.5 w-3.5" aria-hidden="true" />
+                          <Columns3 className="h-4 w-4" aria-hidden="true" />
                           Kanban
                         </button>
                       </div>
                     )}
                     <Link
                       to={routes.workspacePath}
-                      className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg bg-[#A64011] px-3.5 text-[13px] font-semibold text-white hover:bg-[#8C350E]"
+                      className="inline-flex min-h-[44px] items-center gap-1.5 rounded-lg bg-[#A64011] px-4 py-2 text-[14px] leading-[20px] font-semibold text-white transition-colors hover:bg-[#8C350E]"
                     >
-                      <Box className="h-3.5 w-3.5" aria-hidden="true" />
+                      <Box className="h-4 w-4" aria-hidden="true" />
                       Open Workspace
                     </Link>
                   </div>
@@ -1528,24 +1809,24 @@ export function PrivateWorkOrPinPage({ isPinDetail = false }: { isPinDetail?: bo
 
                 {isPinDetail ? (
                   matchedPin ? (
-                    <div className="mt-5 space-y-5">
-                      <dl className="grid grid-cols-1 gap-3 rounded-xl border border-[#D9DEE2] bg-[#F4F3EF]/40 p-4 text-[14px] sm:grid-cols-2">
+                    <div className="mt-5 space-y-6">
+                      <dl className="grid grid-cols-1 gap-4 border-b border-[#E6E8EB] bg-white p-5 text-[14px] sm:grid-cols-2 lg:grid-cols-4">
                         <div>
                           <dt className="text-[12px] text-[#4F5C67]">Location</dt>
-                          <dd className="font-semibold text-[#1B2A4A]">
+                          <dd className="mt-0.5 font-semibold text-[#1B2A4A]">
                             {matchedPin.roomName} · {matchedPin.elementName} ({matchedPin.surfaceSide})
                           </dd>
                         </div>
                         <div>
                           <dt className="text-[12px] text-[#4F5C67]">Assigned worker & role</dt>
-                          <dd className="font-semibold text-[#1B2A4A]">
+                          <dd className="mt-0.5 font-semibold text-[#1B2A4A]">
                             {matchedPin.assigneeName} ·{' '}
                             {formatRoleLabel(project.membership.role, project.membership)}
                           </dd>
                         </div>
                         <div>
                           <dt className="text-[12px] text-[#4F5C67]">Anchor status</dt>
-                          <dd className="font-semibold capitalize text-[#1B2A4A]">
+                          <dd className="mt-0.5 font-semibold capitalize text-[#1B2A4A]">
                             {matchedPin.anchorStatus.replace('_', ' ')}
                             {matchedPin.remappedFromVersionId
                               ? ` (remapped from ${matchedPin.remappedFromVersionId})`
@@ -1554,7 +1835,7 @@ export function PrivateWorkOrPinPage({ isPinDetail = false }: { isPinDetail?: bo
                         </div>
                         <div>
                           <dt className="text-[12px] text-[#4F5C67]">Evidence records</dt>
-                          <dd className="font-semibold text-[#1B2A4A]">
+                          <dd className="mt-0.5 font-semibold text-[#1B2A4A]">
                             {matchedEvidenceItems.length} preserved item
                             {matchedEvidenceItems.length === 1 ? '' : 's'}
                           </dd>
@@ -1562,7 +1843,9 @@ export function PrivateWorkOrPinPage({ isPinDetail = false }: { isPinDetail?: bo
                       </dl>
 
                       <div>
-                        <h2 className="text-[16px] font-semibold text-[#1B2A4A]">Work instructions</h2>
+                        <h2 className="text-[16px] font-semibold text-[#1B2A4A]">
+                          Work instructions
+                        </h2>
                         <p className="mt-1 text-[14px] leading-[22px] text-[#4F5C67]">
                           {matchedPin.description}
                         </p>
@@ -1581,9 +1864,11 @@ export function PrivateWorkOrPinPage({ isPinDetail = false }: { isPinDetail?: bo
                             {matchedEvidenceItems.map((ev) => (
                               <li
                                 key={ev.id}
-                                className="rounded-lg border border-[#D9DEE2] bg-[#F4F3EF]/40 p-3 text-[13px]"
+                                className="rounded-lg border border-[#E6E8EB] bg-white p-3.5 text-[13px]"
                               >
-                                <div className="font-semibold uppercase text-[#A64011]">{ev.slot}</div>
+                                <div className="font-semibold uppercase text-[#A64011]">
+                                  {ev.slot}
+                                </div>
                                 <div className="mt-0.5 font-medium text-[#1B2A4A]">
                                   {ev.note || ev.fileName}
                                 </div>
@@ -1599,95 +1884,175 @@ export function PrivateWorkOrPinPage({ isPinDetail = false }: { isPinDetail?: bo
                   ) : (
                     <div className="mt-5 flex items-center gap-2 text-[14px] text-[#4F5C67]">
                       <AlertCircle className="h-4 w-4 text-[#A64011]" aria-hidden="true" />
-                      <span>Pin “{slug}” was not found on {project.name}.</span>
+                      <span>
+                        Pin “{slug}” was not found on {project.name}.
+                      </span>
                     </div>
                   )
                 ) : (
                   <div className="mt-5 space-y-4">
-                    {/* Live PIN Filter Toolbar */}
-                    <div className="flex flex-wrap items-center gap-2">
-                      {(
-                        [
-                          { key: 'all', label: 'All Pins' },
-                          { key: 'open', label: 'Open' },
-                          { key: 'in_progress', label: 'In progress' },
-                          { key: 'pending_review', label: 'Pending QC' },
-                          { key: 'approved', label: 'Approved' },
-                        ] as const
-                      ).map((tab) => (
-                        <button
-                          key={tab.key}
-                          type="button"
-                          onClick={() => setStatusFilter(tab.key)}
-                          className={`rounded-lg border px-3 py-1.5 text-[13px] font-medium ${
-                            activeStatus === tab.key
-                              ? 'border-[#1B2A4A] bg-[#1B2A4A] text-white'
-                              : 'border-[#D9DEE2] bg-white text-[#1B2A4A] hover:bg-[#F4F3EF]'
-                          }`}
+                    {/* Live PIN Filter Toolbar: Status row + independent Material exceptions + Search + Room + Updated date */}
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <div
+                            role="tablist"
+                            aria-label="Filter Pins by status"
+                            className="flex flex-wrap items-center gap-1.5"
+                          >
+                            {(
+                              [
+                                { key: 'all', label: 'All Pins' },
+                                { key: 'open', label: 'Open' },
+                                { key: 'in_progress', label: 'In progress' },
+                                { key: 'pending_review', label: 'Pending QC' },
+                                { key: 'approved', label: 'Approved' },
+                              ] as const
+                            ).map((tab) => {
+                              const active = activeStatus === tab.key;
+                              return (
+                                <button
+                                  key={tab.key}
+                                  type="button"
+                                  role="tab"
+                                  aria-selected={active}
+                                  data-testid={`private-pin-status-tab-${tab.key}`}
+                                  onClick={() => setStatusFilter(tab.key)}
+                                  className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[13px] leading-[18px] font-medium transition-colors ${
+                                    active
+                                      ? 'border-[#1B2A4A] bg-[#1B2A4A] text-white'
+                                      : 'border-[#D9DEE2] bg-white text-[#1B2A4A] hover:bg-[#F4F3EF]'
+                                  }`}
+                                >
+                                  <span>{tab.label}</span>
+                                  <span
+                                    className={`text-[12px] tabular-nums ${
+                                      active ? 'text-white/80' : 'text-[#4F5C67]'
+                                    }`}
+                                  >
+                                    ({statusCounts[tab.key]})
+                                  </span>
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          <button
+                            type="button"
+                            data-testid="private-pin-filter-material-exceptions"
+                            aria-pressed={materialExceptionOnly}
+                            onClick={toggleMaterialExceptions}
+                            className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[13px] leading-[18px] font-semibold transition-colors ${
+                              materialExceptionOnly
+                                ? 'border-[#A64011] bg-[#FFF3EB] text-[#A64011]'
+                                : 'border-[#D9DEE2] bg-white text-[#1B2A4A] hover:bg-[#F4F3EF]'
+                            }`}
+                          >
+                            <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
+                            <span>Material exceptions</span>
+                            <span className="text-[12px] tabular-nums opacity-80">
+                              ({statusCounts.materialExceptions})
+                            </span>
+                          </button>
+                        </div>
+
+                        <div
+                          className="text-[13px] font-medium text-[#4F5C67] tabular-nums"
+                          data-testid="private-pin-result-count"
                         >
-                          {tab.label}
-                        </button>
-                      ))}
-
-                      <button
-                        type="button"
-                        aria-pressed={materialExceptionOnly}
-                        onClick={toggleMaterialExceptions}
-                        className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-[13px] font-semibold ${
-                          materialExceptionOnly
-                            ? 'border-[#A64011] bg-[#FFF3EB] text-[#A64011]'
-                            : 'border-[#D9DEE2] bg-white text-[#1B2A4A] hover:bg-[#F4F3EF]'
-                        }`}
-                      >
-                        <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-                        Material exceptions
-                      </button>
-
-                      <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
-                        <Search
-                          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#4F5C67]"
-                          aria-hidden="true"
-                        />
-                        <input
-                          type="search"
-                          value={query}
-                          onChange={(e) => setQuery(e.target.value)}
-                          placeholder="Search Pins..."
-                          aria-label="Search project Pins"
-                          className="h-9 w-full rounded-lg border border-[#D9DEE2] bg-white pl-9 pr-3 text-[13px]"
-                        />
+                          Showing <strong className="text-[#1B2A4A]">{filteredPins.length}</strong>{' '}
+                          {filteredPins.length === 1 ? 'Pin' : 'Pins'}
+                        </div>
                       </div>
 
-                      <div className="flex items-center gap-1.5 rounded-lg border border-[#D9DEE2] bg-white px-2 py-1 text-[12px]">
-                        <Calendar className="h-3.5 w-3.5 text-[#4F5C67]" aria-hidden="true" />
-                        <span className="font-semibold text-[#4F5C67]">Updated</span>
-                        <input
-                          type="date"
-                          aria-label="Updated from"
-                          value={updatedFrom}
-                          onChange={(e) => setUpdatedFrom(e.target.value)}
-                          className="h-7 rounded border border-[#D9DEE2] px-1.5 text-[12px]"
-                        />
-                        <span>to</span>
-                        <input
-                          type="date"
-                          aria-label="Updated to"
-                          value={updatedTo}
-                          onChange={(e) => setUpdatedTo(e.target.value)}
-                          className="h-7 rounded border border-[#D9DEE2] px-1.5 text-[12px]"
-                        />
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <div className="relative min-w-[220px] flex-1 sm:max-w-sm">
+                          <Search
+                            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#4F5C67]"
+                            aria-hidden="true"
+                          />
+                          <input
+                            type="search"
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
+                            placeholder="Search Pin title, ID, room, worker..."
+                            aria-label="Search project Pins"
+                            className="h-10 w-full rounded-lg border border-[#D9DEE2] bg-white pl-9 pr-8 text-[14px] text-[#1B2A4A]"
+                          />
+                          {query && (
+                            <button
+                              type="button"
+                              onClick={() => setQuery('')}
+                              aria-label="Clear Pin search"
+                              className="absolute right-2 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded text-[#4F5C67] hover:bg-[#F4F3EF]"
+                            >
+                              <X className="h-3.5 w-3.5" aria-hidden="true" />
+                            </button>
+                          )}
+                        </div>
+
+                        <div>
+                          <label htmlFor="private-pin-room-filter" className="sr-only">
+                            Filter by room
+                          </label>
+                          <select
+                            id="private-pin-room-filter"
+                            value={activeRoomParam}
+                            onChange={(e) => setRoomFilter(e.target.value)}
+                            className="h-10 rounded-lg border border-[#D9DEE2] bg-white px-3 text-[13px] font-medium text-[#1B2A4A]"
+                          >
+                            <option value="">All rooms</option>
+                            {roomOptions.map((room) => (
+                              <option key={room.id} value={room.id}>
+                                {room.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-1.5 rounded-lg border border-[#D9DEE2] bg-white px-2.5 py-1">
+                          <Calendar className="h-3.5 w-3.5 text-[#4F5C67]" aria-hidden="true" />
+                          <span className="text-[12px] font-semibold text-[#4F5C67]">Updated</span>
+                          <input
+                            type="date"
+                            aria-label="Updated from"
+                            value={updatedFrom}
+                            onChange={(e) => setUpdatedFrom(e.target.value)}
+                            className="h-8 rounded border border-[#D9DEE2] px-2 text-[12px] text-[#1B2A4A]"
+                          />
+                          <span className="text-[12px] text-[#4F5C67]">to</span>
+                          <input
+                            type="date"
+                            aria-label="Updated to"
+                            value={updatedTo}
+                            onChange={(e) => setUpdatedTo(e.target.value)}
+                            className="h-8 rounded border border-[#D9DEE2] px-2 text-[12px] text-[#1B2A4A]"
+                          />
+                        </div>
+
+                        {hasActiveFilter && (
+                          <button
+                            type="button"
+                            onClick={clearAllFilters}
+                            className="inline-flex h-10 items-center gap-1 rounded-lg border border-[#D9DEE2] bg-white px-3 text-[13px] font-medium text-[#4F5C67] hover:bg-[#F4F3EF] hover:text-[#1B2A4A]"
+                          >
+                            <X className="h-3.5 w-3.5" aria-hidden="true" />
+                            Reset filters
+                          </button>
+                        )}
                       </div>
                     </div>
 
                     {transitionNotice && (
                       <div
                         role="alert"
-                        className="flex items-center justify-between gap-2 rounded-lg border border-[#A64011]/30 bg-[#FFF3EB] px-3.5 py-2.5 text-[13px] text-[#1B2A4A]"
+                        className="flex items-center justify-between gap-2 rounded-lg border border-[#A64011]/30 bg-[#FFF3EB] px-4 py-2.5 text-[13px] text-[#1B2A4A]"
                       >
                         <span>{transitionNotice}</span>
                         <button
                           type="button"
                           onClick={() => setTransitionNotice(null)}
+                          aria-label="Dismiss notice"
                           className="rounded p-1 text-[#4F5C67] hover:bg-white"
                         >
                           <X className="h-3.5 w-3.5" aria-hidden="true" />
@@ -1696,139 +2061,305 @@ export function PrivateWorkOrPinPage({ isPinDetail = false }: { isPinDetail?: bo
                     )}
 
                     {viewMode === 'list' ? (
-                      filteredPins.length === 0 ? (
-                        <p className="rounded-lg border border-dashed border-[#D9DEE2] bg-[#F4F3EF]/35 px-4 py-8 text-center text-[14px] text-[#4F5C67]">
-                          {pins.length === 0
-                            ? `No Spatial Pins exist on ${project.name} yet. Open the 3D Workspace to anchor work on a verified surface.`
-                            : 'No Spatial Pins match the active department, status, or Updated date filters.'}
-                        </p>
-                      ) : (
-                        <ul className="divide-y divide-[#D9DEE2] rounded-lg border border-[#D9DEE2]">
-                          {filteredPins.map((pin) => {
-                            const evCount = (pin.evidence.before ? 1 : 0) + (pin.evidence.after ? 1 : 0);
-                            const pinColor = resolvePinDisplayColor(pin, projectDepartments);
-                            const updatedKey = toProjectLocalDateKey(
-                              getPinUpdatedIso(pin),
-                              project.timezone
-                            );
-                            return (
-                              <li
-                                key={pin.id}
-                                className="flex flex-wrap items-center justify-between gap-3 p-4 text-[14px]"
-                              >
-                                <div>
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <span
-                                      className="h-3 w-3 rounded-full border border-black/15"
-                                      style={{ backgroundColor: pinColor }}
-                                      aria-hidden="true"
-                                    />
-                                    <Link
-                                      to={routes.pinDetailPath(pin.id)}
-                                      className="font-semibold text-[#1B2A4A] hover:text-[#A64011]"
-                                    >
-                                      {pin.title}
-                                    </Link>
-                                    <span className="rounded bg-[#F4F3EF] px-2 py-0.5 text-[12px] font-semibold text-[#1B2A4A]">
-                                      {formatStatusLabel(pin.status)}
-                                    </span>
-                                    {pinHasMaterialException(pin) && (
-                                      <span className="rounded bg-[#FFF3EB] px-2 py-0.5 text-[11px] font-semibold text-[#A64011]">
-                                        Material exception
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="mt-0.5 text-[13px] text-[#4F5C67]">
-                                    {pin.roomName} · {pin.department} · {pin.assigneeName} ·{' '}
-                                    {evCount}/2 evidence · Updated {updatedKey}
-                                  </div>
-                                </div>
-                                <Link
-                                  to={routes.pinDetailPath(pin.id)}
-                                  className="inline-flex min-h-[38px] items-center rounded-lg border border-[#D9DEE2] bg-white px-3 text-[13px] font-medium text-[#1B2A4A] hover:bg-[#F4F3EF]"
-                                >
-                                  Inspect Pin
-                                </Link>
-                              </li>
-                            );
-                          })}
-                        </ul>
-                      )
-                    ) : (
-                      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
-                        {kanbanColumns.map((col) => (
-                          <div
-                            key={col.status}
-                            className="flex min-h-[280px] flex-col rounded-xl border border-[#D9DEE2] bg-[#F4F3EF]/30 p-3"
-                          >
-                            <div className="flex items-center justify-between border-b border-[#D9DEE2] pb-2">
-                              <h2 className="text-[14px] font-bold text-[#1B2A4A]">{col.label}</h2>
-                              <span className="rounded bg-white px-2 py-0.5 text-[12px] font-semibold text-[#4F5C67] tabular-nums">
-                                ({col.pins.length})
-                              </span>
-                            </div>
-                            {col.pins.length === 0 ? (
-                              <div className="mt-3 flex flex-1 items-center justify-center rounded-lg border border-dashed border-[#D9DEE2] bg-white/70 p-4 text-center text-[12px] text-[#4F5C67]">
-                                No Pins in {col.label}
-                              </div>
+                      <section
+                        data-testid="private-pin-list-view"
+                        aria-label="Project PIN list"
+                        className="border-t border-b border-[#D9DEE2] bg-white"
+                      >
+                        {filteredPins.length === 0 ? (
+                          <div className="px-6 py-12 text-center" aria-live="polite">
+                            <h2 className="text-[18px] leading-[24px] font-semibold text-[#1B2A4A]">
+                              {pins.length === 0
+                                ? 'No Spatial Pins yet'
+                                : 'No Pins match the current filters'}
+                            </h2>
+                            {pins.length === 0 ? (
+                              <p className="mt-1.5 text-[14px] leading-[20px] text-[#4F5C67]">
+                                No Spatial Pins exist on {project.name} yet. Open the 3D Workspace
+                                to anchor work on a verified surface.
+                              </p>
                             ) : (
-                              <ul className="mt-3 space-y-2.5">
-                                {col.pins.map((pin) => {
-                                  const pinColor = resolvePinDisplayColor(pin, projectDepartments);
-                                  return (
-                                    <li
-                                      key={pin.id}
-                                      className="rounded-lg border border-[#D9DEE2] bg-white p-3"
-                                    >
-                                      <div className="flex items-start gap-2">
+                              <>
+                                <p className="mt-2 text-[14px] leading-[20px] text-[#4F5C67]">
+                                  Active filters:{' '}
+                                  <span className="font-medium text-[#1B2A4A]">
+                                    {activeFilterLabels.join(' · ')}
+                                  </span>
+                                </p>
+                                <p className="mx-auto mt-1.5 max-w-[600px] text-[14px] leading-[20px] text-[#4F5C67]">
+                                  {activeDepartment
+                                    ? 'Select All departments in the left sidebar to remove only the department condition while keeping your other filters, or reset all filters below.'
+                                    : 'Clear individual toolbar filters above, or click Reset filters to show all Pins on this project.'}
+                                </p>
+                                {hasActiveFilter && (
+                                  <button
+                                    type="button"
+                                    onClick={clearAllFilters}
+                                    className="mt-4 inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-[#D9DEE2] bg-white px-4 py-2 text-[13px] font-semibold text-[#1B2A4A] hover:bg-[#F4F3EF]"
+                                  >
+                                    <X className="h-3.5 w-3.5" aria-hidden="true" />
+                                    Reset filters
+                                  </button>
+                                )}
+                              </>
+                            )}
+                          </div>
+                        ) : (
+                          <div>
+                            <div
+                              aria-hidden="true"
+                              className="hidden border-b border-[#E6E8EB] bg-[#FAF9F6] px-4 py-2.5 text-[11px] font-semibold uppercase tracking-wide text-[#4F5C67] lg:grid lg:grid-cols-[minmax(0,2.2fr)_minmax(0,1.2fr)_minmax(0,1.15fr)_minmax(0,1.1fr)_auto] lg:items-center lg:gap-4"
+                            >
+                              <span>Pin & status</span>
+                              <span>Location & department</span>
+                              <span>Assignee & updated</span>
+                              <span>Materials & QC evidence</span>
+                              <span className="text-right">Actions</span>
+                            </div>
+
+                            <ul className="divide-y divide-[#E6E8EB]">
+                              {filteredPins.map((pin) => {
+                                const issuedCount = pin.materials.filter(
+                                  (m) => m.issuedQty > 0
+                                ).length;
+                                const evCount =
+                                  (pin.evidence.before ? 1 : 0) + (pin.evidence.after ? 1 : 0);
+                                const pinColor = resolvePinDisplayColor(pin, projectDepartments);
+                                const updatedKey = toProjectLocalDateKey(
+                                  getPinUpdatedIso(pin),
+                                  projectTimezone
+                                );
+                                return (
+                                  <li
+                                    key={pin.id}
+                                    data-testid={`private-pin-list-row-${pin.id}`}
+                                    className="grid grid-cols-1 gap-3 px-4 py-3.5 transition-colors hover:bg-[#FAF9F6] lg:grid-cols-[minmax(0,2.2fr)_minmax(0,1.2fr)_minmax(0,1.15fr)_minmax(0,1.1fr)_auto] lg:items-center lg:gap-4"
+                                  >
+                                    <div className="min-w-0">
+                                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                                         <span
-                                          className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
+                                          className="h-3 w-3 shrink-0 rounded-full border border-black/15"
                                           style={{ backgroundColor: pinColor }}
                                           aria-hidden="true"
                                         />
-                                        <div className="min-w-0 flex-1">
-                                          <Link
-                                            to={routes.pinDetailPath(pin.id)}
-                                            className="text-[13px] font-semibold text-[#1B2A4A] hover:text-[#A64011]"
-                                          >
-                                            {pin.title}
-                                          </Link>
-                                          <div className="mt-0.5 text-[12px] text-[#4F5C67]">
-                                            {pin.roomName} · {pin.department}
+                                        <Link
+                                          to={routes.pinDetailPath(pin.id)}
+                                          className="text-[15px] leading-[21px] font-semibold text-[#1B2A4A] underline-offset-4 hover:text-[#A64011] hover:underline"
+                                        >
+                                          {pin.title}
+                                        </Link>
+                                      </div>
+                                      <div className="mt-1 flex flex-wrap items-center gap-1.5 pl-5">
+                                        <span className="text-[12px] font-medium text-[#4F5C67] tabular-nums">
+                                          {pin.id}
+                                        </span>
+                                        <span className="rounded bg-[#F4F3EF] px-2 py-0.5 text-[12px] font-semibold text-[#1B2A4A]">
+                                          {formatStatusLabel(pin.status)}
+                                        </span>
+                                        {pinHasMaterialException(pin) && (
+                                          <span className="inline-flex items-center gap-1 rounded bg-[#FFF3EB] px-2 py-0.5 text-[11px] font-semibold text-[#A64011]">
+                                            <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                                            Material exception
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+
+                                    <div className="min-w-0 pl-5 text-[13px] leading-[18px] lg:pl-0">
+                                      <div className="font-medium text-[#1B2A4A]">
+                                        {pin.roomName}
+                                      </div>
+                                      <div className="text-[#4F5C67]">{pin.department}</div>
+                                    </div>
+
+                                    <div className="min-w-0 pl-5 text-[13px] leading-[18px] lg:pl-0">
+                                      <div className="text-[#1B2A4A]">{pin.assigneeName}</div>
+                                      <div className="text-[12px] text-[#4F5C67] tabular-nums">
+                                        Updated {updatedKey}
+                                      </div>
+                                    </div>
+
+                                    <div className="min-w-0 pl-5 text-[13px] leading-[18px] text-[#4F5C67] tabular-nums lg:pl-0">
+                                      <div>
+                                        <span className="font-medium text-[#1B2A4A]">
+                                          {pin.materials.length}
+                                        </span>{' '}
+                                        materials ({issuedCount} issued)
+                                      </div>
+                                      <div>
+                                        <span className="font-medium text-[#1B2A4A]">
+                                          {evCount}/2
+                                        </span>{' '}
+                                        QC photos
+                                      </div>
+                                    </div>
+
+                                    <div className="flex flex-wrap items-center gap-2 pl-5 lg:justify-end lg:pl-0">
+                                      <Link
+                                        to={routes.locatePinPath(pin.id)}
+                                        className="inline-flex min-h-[38px] items-center gap-1.5 whitespace-nowrap rounded-lg border border-[#D9DEE2] bg-white px-3 py-1.5 text-[13px] leading-[18px] font-medium text-[#1B2A4A] hover:bg-[#F4F3EF]"
+                                      >
+                                        <MapPin
+                                          className="h-3.5 w-3.5 text-[#D4652F]"
+                                          aria-hidden="true"
+                                        />
+                                        Locate in 3D
+                                      </Link>
+                                      <Link
+                                        to={routes.pinDetailPath(pin.id)}
+                                        className="inline-flex min-h-[38px] items-center whitespace-nowrap rounded-lg bg-[#1B2A4A] px-3.5 py-1.5 text-[13px] leading-[18px] font-medium text-white hover:bg-[#1B2A4A]/90"
+                                      >
+                                        Inspect Pin
+                                      </Link>
+                                    </div>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        )}
+                      </section>
+                    ) : (
+                      <div className="space-y-4">
+                        {filteredPins.length === 0 && hasActiveFilter && (
+                          <div
+                            role="status"
+                            aria-live="polite"
+                            className="flex flex-wrap items-center justify-between gap-3 border-y border-[#D9DEE2] bg-white px-4 py-3 text-[13px] text-[#4F5C67]"
+                          >
+                            <div>
+                              <span className="font-semibold text-[#1B2A4A]">
+                                No Pins match the active filters ({activeFilterLabels.join(' · ')}).
+                              </span>{' '}
+                              {activeDepartment
+                                ? 'Select All departments in the left sidebar to remove only the department condition, or reset all filters.'
+                                : 'Adjust toolbar filters above or click Reset filters.'}
+                            </div>
+                            <button
+                              type="button"
+                              onClick={clearAllFilters}
+                              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg border border-[#D9DEE2] bg-white px-3 text-[12px] font-semibold text-[#1B2A4A] hover:bg-[#F4F3EF]"
+                            >
+                              <X className="h-3.5 w-3.5" aria-hidden="true" />
+                              Reset filters
+                            </button>
+                          </div>
+                        )}
+
+                        <section
+                          data-testid="private-pin-kanban-view"
+                          aria-label="Project PIN Kanban board"
+                          className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4"
+                        >
+                          {kanbanColumns.map((col) => (
+                            <div
+                              key={col.status}
+                              className="flex min-h-[300px] flex-col border-t-2 border-[#D9DEE2] bg-[#FAF9F6] px-3 py-3"
+                            >
+                              <div className="flex items-center justify-between border-b border-[#E6E8EB] pb-2.5">
+                                <h2 className="text-[14px] font-bold text-[#1B2A4A]">
+                                  {col.label}
+                                </h2>
+                                <span className="text-[12px] font-semibold text-[#4F5C67] tabular-nums">
+                                  ({col.pins.length})
+                                </span>
+                              </div>
+                              {col.pins.length === 0 ? (
+                                <div className="mt-3 flex flex-1 items-center justify-center border border-dashed border-[#D9DEE2] bg-white/60 p-4 text-center text-[13px] text-[#4F5C67]">
+                                  No Pins in {col.label}
+                                </div>
+                              ) : (
+                                <ul className="mt-3 space-y-2.5">
+                                  {col.pins.map((pin) => {
+                                    const pinColor = resolvePinDisplayColor(
+                                      pin,
+                                      projectDepartments
+                                    );
+                                    const evCount =
+                                      (pin.evidence.before ? 1 : 0) +
+                                      (pin.evidence.after ? 1 : 0);
+                                    return (
+                                      <li
+                                        key={pin.id}
+                                        className="rounded-lg border border-[#E6E8EB] bg-white p-3.5 transition-colors hover:border-[#1B2A4A]/40"
+                                      >
+                                        <div className="flex items-start gap-2">
+                                          <span
+                                            className="mt-1 h-3 w-3 shrink-0 rounded-full border border-black/15"
+                                            style={{ backgroundColor: pinColor }}
+                                            aria-hidden="true"
+                                          />
+                                          <div className="min-w-0 flex-1">
+                                            <Link
+                                              to={routes.pinDetailPath(pin.id)}
+                                              className="block text-[14px] leading-[19px] font-semibold text-[#1B2A4A] hover:text-[#A64011] hover:underline"
+                                            >
+                                              {pin.title}
+                                            </Link>
+                                            <div className="mt-1 text-[12px] text-[#4F5C67]">
+                                              <span className="font-medium text-[#1B2A4A] tabular-nums">
+                                                {pin.id}
+                                              </span>{' '}
+                                              · {pin.roomName} · {pin.department}
+                                            </div>
+                                            <div className="mt-0.5 text-[12px] text-[#4F5C67]">
+                                              {pin.assigneeName} ·{' '}
+                                              <span className="font-medium text-[#1B2A4A] tabular-nums">
+                                                {evCount}/2 QC photos
+                                              </span>
+                                            </div>
                                           </div>
                                         </div>
-                                      </div>
-                                      <div className="mt-2.5 flex items-center justify-between border-t border-[#D9DEE2] pt-2 text-[11px]">
-                                        <Link
-                                          to={routes.locatePinPath(pin.id)}
-                                          className="font-semibold text-[#A64011] hover:underline"
-                                        >
-                                          Locate in 3D
-                                        </Link>
-                                        <button
-                                          type="button"
-                                          onClick={() =>
-                                            setTransitionNotice(
-                                              `Open ${pin.title} detail to attach required Before/After QC evidence and run server-verified status transitions.`
-                                            )
-                                          }
-                                          className="font-medium text-[#1B2A4A] hover:underline"
-                                        >
-                                          QC status…
-                                        </button>
-                                      </div>
-                                    </li>
-                                  );
-                                })}
-                              </ul>
-                            )}
-                          </div>
-                        ))}
+                                        {pinHasMaterialException(pin) && (
+                                          <div className="mt-2 inline-flex items-center gap-1 rounded bg-[#FFF3EB] px-2 py-0.5 text-[11px] font-semibold text-[#A64011]">
+                                            <AlertTriangle
+                                              className="h-3 w-3"
+                                              aria-hidden="true"
+                                            />
+                                            Material exception
+                                          </div>
+                                        )}
+                                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-[#E6E8EB] pt-2.5 text-[12px]">
+                                          <Link
+                                            to={routes.locatePinPath(pin.id)}
+                                            className="inline-flex items-center gap-1 font-semibold text-[#A64011] hover:underline"
+                                          >
+                                            <MapPin className="h-3 w-3" aria-hidden="true" />
+                                            Locate in 3D
+                                          </Link>
+                                          <div className="flex items-center gap-3">
+                                            <Link
+                                              to={routes.pinDetailPath(pin.id)}
+                                              className="font-medium text-[#1B2A4A] hover:underline"
+                                            >
+                                              Inspect Pin
+                                            </Link>
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                setTransitionNotice(
+                                                  `Open ${pin.title} detail to attach required Before/After QC evidence and run server-verified status transitions.`
+                                                )
+                                              }
+                                              className="font-medium text-[#4F5C67] hover:text-[#1B2A4A] hover:underline"
+                                            >
+                                              QC status…
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </li>
+                                    );
+                                  })}
+                                </ul>
+                              )}
+                            </div>
+                          ))}
+                        </section>
                       </div>
                     )}
                   </div>
                 )}
-              </section>
+              </div>
             ) : null}
           </div>
         </main>

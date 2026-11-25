@@ -156,10 +156,6 @@ export function PinDetailPage() {
                   Workspace
                 </Link>
               </div>
-
-              <span className="text-[13px] leading-[18px] font-semibold text-[#A64011]">
-                {state.project.demoLabel}
-              </span>
             </div>
 
             {/* Header Card */}
@@ -173,7 +169,7 @@ export function PinDetailPage() {
                       title={`Effective Pin color ${effectiveColor}`}
                       aria-hidden="true"
                     />
-                    <h1 className="text-[26px] leading-[32px] font-bold tracking-tight text-[#1B2A4A]">
+                    <h1 className="vonta-page-title text-[#1B2A4A]">
                       {pin.title}
                     </h1>
                   </div>

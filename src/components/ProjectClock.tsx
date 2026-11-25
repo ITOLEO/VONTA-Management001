@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react';
-import { Clock } from 'lucide-react';
 import { formatProjectClock, isValidIanaTimezone } from '../domain/attendanceEngine';
 
 export interface ProjectClockProps {
@@ -10,8 +9,10 @@ export interface ProjectClockProps {
 }
 
 /**
- * L05 Live project clock placed immediately before Profile in the top bar.
- * Displays weekday, date, HH:MM:SS (live to the second), and IANA zone.
+ * Live project clock rendered directly on the header surface (Stage 03):
+ * - No enclosing rectangle/box.
+ * - Shows project date, live HH:MM:SS time, and time zone with larger text size.
+ * - Uses tabular-nums and fixed time-slot width so a seconds rollover never moves adjacent controls.
  */
 export const ProjectClock: React.FC<ProjectClockProps> = ({
   timezone,
@@ -34,24 +35,30 @@ export const ProjectClock: React.FC<ProjectClockProps> = ({
     <div
       data-testid="project-live-clock"
       data-timezone={safeZone}
+      aria-label={`Project time (${safeZone}): ${formatted.weekday}, ${formatted.dateLabel} ${formatted.timeWithSeconds} (${formatted.offsetLabel})`}
       title={`Project time (${safeZone}): ${formatted.weekday}, ${formatted.dateLabel} ${formatted.timeWithSeconds} (${formatted.offsetLabel})`}
-      className={`hidden md:inline-flex items-center gap-1.5 rounded-lg border border-[#D9DEE2] bg-[#FAF9F6] px-2 py-1.5 text-[12px] text-[#1B2A4A] tabular-nums shrink-0 ${className}`}
+      className={`hidden md:inline-flex shrink-0 items-center gap-1.5 text-[13px] leading-[20px] text-[#1B2A4A] tabular-nums select-none ${className}`}
     >
-      <Clock className="w-3.5 h-3.5 text-[#D4652F] shrink-0" aria-hidden="true" />
-      <span className="hidden lg:inline font-medium whitespace-nowrap">
+      <span
+        data-testid="project-live-clock-date"
+        className="hidden xl:inline whitespace-nowrap font-medium text-[#4F5C67]"
+      >
         {formatted.weekday}, {formatted.dateLabel}
       </span>
-      <span className="hidden lg:inline text-[#D9DEE2]" aria-hidden="true">
+      <span className="hidden xl:inline text-[#D9DEE2]" aria-hidden="true">
         ·
       </span>
       <span
         data-testid="project-live-clock-time"
-        className="font-semibold tracking-tight text-[#1B2A4A] whitespace-nowrap"
+        className="inline-block min-w-[66px] text-center whitespace-nowrap text-[14px] leading-[20px] font-semibold tracking-tight text-[#1B2A4A] tabular-nums"
       >
         {formatted.timeWithSeconds}
       </span>
-      <span className="hidden 2xl:inline text-[#4F5C67] whitespace-nowrap">
-        {formatted.timezone}
+      <span
+        data-testid="project-live-clock-zone"
+        className="whitespace-nowrap text-[12.5px] leading-[18px] font-medium text-[#4F5C67]"
+      >
+        {formatted.offsetLabel}
       </span>
     </div>
   );

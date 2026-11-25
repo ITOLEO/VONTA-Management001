@@ -5,6 +5,7 @@ import type {
   RoomDefinition,
   SpatialPin,
 } from './types';
+import type { ProjectDepartment } from './departmentCatalog';
 
 export type ProjectRole = 'contractor' | 'owner' | 'architect' | 'worker' | 'accounting';
 export type MembershipStatus = 'active' | 'invited' | 'revoked';
@@ -332,6 +333,7 @@ export interface AuthorizedProject {
   jobs?: ProcessingJobRecord[];
   modelVersions?: ModelVersionRecord[];
   pins?: ProjectPinRecord[];
+  departments?: ProjectDepartment[];
 }
 
 export interface PendingInvitationRecord {

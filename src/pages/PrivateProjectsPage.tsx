@@ -139,7 +139,7 @@ export function PrivateProjectsPage() {
         <main ref={menuContainerRef} className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8">
           <div className="mx-auto w-full max-w-[1280px]">
             <div>
-              <h1 className="text-[26px] leading-[32px] font-bold tracking-tight text-[#1B2A4A]">
+              <h1 className="vonta-page-title text-[#1B2A4A]">
                 Projects
               </h1>
             </div>

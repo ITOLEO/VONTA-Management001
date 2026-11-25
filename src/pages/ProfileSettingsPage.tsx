@@ -577,7 +577,7 @@ export function ProfileSettingsPage({ demoMode = false }: ProfileSettingsPagePro
           <div className="min-w-0 flex-1 max-w-[760px]">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h1 className="text-[26px] leading-[32px] font-bold tracking-tight text-[#1B2A4A]">
+                <h1 className="vonta-page-title text-[#1B2A4A]">
                   Preferences
                 </h1>
                 <p className="mt-1 text-[14px] leading-[20px] text-[#4F5C67]">
@@ -585,11 +585,6 @@ export function ProfileSettingsPage({ demoMode = false }: ProfileSettingsPagePro
                   security.
                 </p>
               </div>
-              {demoMode && (
-                <span className="rounded-md border border-[#D4652F]/35 bg-[#FFF3EB] px-2.5 py-1 text-[12px] font-semibold text-[#A64011]">
-                  Demo preview · Local session
-                </span>
-              )}
             </div>
 
             <div className="mt-6 space-y-6">

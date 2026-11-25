@@ -199,7 +199,7 @@ export function AuthPage({ defaultMode = 'sign-in' }: { defaultMode?: AuthMode }
             </div>
           )}
 
-          <h1 className="text-[26px] leading-[32px] font-bold tracking-tight text-[#1B2A4A]">
+          <h1 className="vonta-page-title text-[#1B2A4A]">
             {mode === 'sign-in'
               ? 'Sign in to VONTA'
               : mode === 'create-account'
@@ -465,20 +465,19 @@ export function AuthPage({ defaultMode = 'sign-in' }: { defaultMode?: AuthMode }
           )}
         </div>
 
-        {/* Explicitly isolated synthetic demo entry */}
+        {/* Explicitly isolated sample workspace entry */}
         <div className="mt-5 rounded-xl border border-[#D9DEE2] bg-white p-4">
-          <div className="text-[13px] leading-[18px] font-semibold text-[#A64011]">
-            DEMO DATA — NOT A LIVE PROJECT
+          <div className="text-[13px] leading-[18px] font-semibold text-[#1B2A4A]">
+            Sample workspace
           </div>
           <p className="mt-1 text-[13px] leading-[18px] text-[#4F5C67]">
-            Inspect the isolated Paviliun Kerja (A-03 R00) synthetic preview locally without signing
-            in.
+            Explore Paviliun Kerja (A-03 R00) in an isolated local session without signing in.
           </p>
           <Link
-            to="/demo"
+            to="/demo/projects"
             className="mt-3 inline-flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded-lg border border-[#D9DEE2] bg-[#F4F3EF]/60 px-4 py-2 text-[14px] leading-[20px] font-medium text-[#1B2A4A] transition-colors hover:bg-[#F4F3EF]"
           >
-            Open synthetic A-03 demo
+            Explore sample project
             <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </Link>
         </div>

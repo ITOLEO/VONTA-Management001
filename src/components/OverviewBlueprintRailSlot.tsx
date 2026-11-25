@@ -18,6 +18,11 @@ interface OverviewBlueprintRailSlotProps {
   getSheetDetailPath: (sheetId: string) => string;
 }
 
+/**
+ * Full-height Blueprint Sheet Register inside the Overview contextual rail (Stage 04):
+ * - Owns all remaining vertical rail height down to Project settings via flex-1 min-h-0.
+ * - Keeps search, discipline category filter, sheet count, and Reset fixed above the scroll list.
+ */
 export function OverviewBlueprintRailSlot({
   sheets,
   departments,
@@ -45,19 +50,19 @@ export function OverviewBlueprintRailSlot({
   return (
     <div
       data-testid="overview-blueprint-rail-list"
-      className="mt-2 flex flex-col gap-2 border-t border-[#D9DEE2] pt-2.5"
+      className="flex min-h-0 flex-1 flex-col gap-2 border-t border-[#D9DEE2] pt-2.5"
     >
-      <div className="flex items-center gap-1.5">
+      <div className="flex shrink-0 items-center gap-1.5">
         <div className="relative min-w-0 flex-1">
           <Search
             className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#4F5C67]"
             aria-hidden="true"
           />
           <input
-            type="search"
+            type="text"
             value={query}
             onChange={(e) => onQueryChange(e.target.value)}
-            placeholder="Search blueprints"
+            placeholder="Search sheets"
             aria-label="Search blueprints"
             data-testid="rail-blueprint-search"
             className="w-full rounded-lg border border-[#D9DEE2] bg-white py-1.5 pl-8 pr-6 text-[12px] leading-[16px] text-[#1B2A4A] placeholder:text-[#4F5C67] focus:border-[#A64011] focus:outline-none"
@@ -79,7 +84,7 @@ export function OverviewBlueprintRailSlot({
           data-testid="rail-blueprint-dept-filter"
           value={departmentFilter}
           onChange={(e) => onDepartmentFilterChange(e.target.value)}
-          className="max-w-[92px] shrink-0 rounded-lg border border-[#D9DEE2] bg-white px-1.5 py-1.5 text-[11px] font-medium text-[#1B2A4A] focus:border-[#A64011] focus:outline-none"
+          className="max-w-[82px] shrink-0 rounded-lg border border-[#D9DEE2] bg-white px-1.5 py-1.5 text-[12px] leading-[16px] font-medium text-[#1B2A4A] focus:border-[#A64011] focus:outline-none"
         >
           <option value="all">All</option>
           {departments.map((dept) => (
@@ -90,13 +95,17 @@ export function OverviewBlueprintRailSlot({
         </select>
       </div>
 
-      <div className="flex items-center justify-between px-1 text-[11px] text-[#4F5C67]">
+      <div
+        data-testid="rail-blueprint-count"
+        className="flex shrink-0 items-center justify-between px-1 text-[12px] leading-[16px] text-[#4F5C67] tabular-nums"
+      >
         <span>
           {filtered.length} of {sheets.length} sheet{sheets.length === 1 ? '' : 's'}
         </span>
         {(query || departmentFilter !== 'all') && (
           <button
             type="button"
+            data-testid="rail-blueprint-reset"
             onClick={() => {
               onQueryChange('');
               onDepartmentFilterChange('all');
@@ -110,7 +119,8 @@ export function OverviewBlueprintRailSlot({
 
       <ul
         aria-label="Registered drawings"
-        className="max-h-[260px] space-y-1 overflow-y-auto pr-0.5"
+        data-testid="rail-blueprint-sheet-list"
+        className="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain pr-0.5 pb-1"
       >
         {filtered.length === 0 ? (
           <li className="rounded-lg border border-dashed border-[#D9DEE2] px-2.5 py-3 text-center text-[12px] text-[#4F5C67]">
@@ -132,16 +142,18 @@ export function OverviewBlueprintRailSlot({
                   }`}
                 >
                   <div className="flex items-center justify-between gap-1.5">
-                    <span className="inline-flex min-w-0 items-center gap-1 text-[12px] font-semibold">
+                    <span className="inline-flex min-w-0 items-center gap-1 text-[12px] leading-[16px] font-semibold">
                       <FileText className="h-3 w-3 shrink-0 text-[#4F5C67]" aria-hidden="true" />
                       <span className="truncate">{sheet.sheetCode}</span>
                     </span>
-                    <span className="shrink-0 rounded bg-[#F4F3EF] px-1.5 py-0.5 text-[10px] font-medium text-[#4F5C67]">
+                    <span className="shrink-0 rounded bg-[#F4F3EF] px-1.5 py-0.5 text-[11px] font-medium text-[#4F5C67]">
                       {sheet.revision}
                     </span>
                   </div>
-                  <div className="mt-0.5 truncate text-[11px] text-[#4F5C67]">{sheet.title}</div>
-                  <div className="mt-0.5 flex items-center justify-between gap-1 text-[10px] text-[#4F5C67]">
+                  <div className="mt-0.5 truncate text-[12px] leading-[16px] text-[#4F5C67]">
+                    {sheet.title}
+                  </div>
+                  <div className="mt-0.5 flex items-center justify-between gap-1 text-[11px] text-[#4F5C67]">
                     <span className="truncate">{sheet.areaName}</span>
                     {sheet.isCombinedElectricalPlumbing ? (
                       <span className="shrink-0 font-semibold text-[#0D9488]">E+P</span>

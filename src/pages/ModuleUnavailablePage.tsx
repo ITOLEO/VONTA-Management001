@@ -162,7 +162,7 @@ export function ModuleUnavailablePage({ moduleKey }: { moduleKey: string }) {
                     <Wallet className="h-3.5 w-3.5" aria-hidden="true" />
                     Accounting · {title}
                   </span>
-                  <h1 className="mt-1 text-[26px] leading-[32px] font-bold tracking-tight text-[#1B2A4A]">
+                  <h1 className="vonta-page-title mt-1 text-[#1B2A4A]">
                     Monthly Department Budgets
                   </h1>
                   <p className="mt-1 text-[14px] text-[#4F5C67]">
@@ -207,7 +207,7 @@ export function ModuleUnavailablePage({ moduleKey }: { moduleKey: string }) {
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E6E8EB] px-5 py-4">
                   <h2
                     id="accounting-dept-table-heading"
-                    className="text-[16px] font-semibold text-[#1B2A4A]"
+                    className="vonta-section-title text-[#1B2A4A]"
                   >
                     Department Ledger ({departments.length} departments · {selectedMonth})
                   </h2>
@@ -464,7 +464,7 @@ export function ModuleUnavailablePage({ moduleKey }: { moduleKey: string }) {
             </div>
             <h1
               id="module-dev-heading"
-              className="mt-4 text-[26px] leading-[32px] font-bold tracking-tight text-[#1B2A4A]"
+              className="vonta-page-title mt-4 text-[#1B2A4A]"
             >
               {title}
             </h1>

@@ -300,3 +300,145 @@ export function computeCompassOrientation(
       : 'Grid orientation · North not set',
   };
 }
+
+export type AnnotationPickPieceKind = 'label' | 'stroke' | 'wall_fill';
+
+export interface AnnotationPickCandidate {
+  annotationId: string;
+  /** Distance from camera ray origin to the hit point in meters. */
+  distance: number;
+  /** Distance from click coordinates to candidate in CSS pixels (0 for direct hit). */
+  screenDistancePx: number;
+  /** Which selectable piece of the annotation produced this candidate. */
+  kind: AnnotationPickPieceKind;
+  /** True when an opaque building wall or slab lies closer than the candidate along the view ray. */
+  occludedByWall: boolean;
+}
+
+export const DEFAULT_ANNOTATION_SCREEN_TOLERANCE_PX = 14;
+export const DEFAULT_WALL_OCCLUSION_CLEARANCE_M = 0.045;
+const SAME_SURFACE_DEPTH_TIE_M = 0.18;
+
+const PIECE_KIND_PRIORITY: Record<AnnotationPickPieceKind, number> = {
+  label: 0,
+  stroke: 1,
+  wall_fill: 2,
+};
+
+/**
+ * Returns true when an opaque building surface lies strictly in front of a candidate mark point,
+ * preventing occluded marks from being selected or erased through walls.
+ */
+export function isPointOccludedByWall(
+  pointDistanceMeters: number,
+  nearestWallDistanceMeters: number | null,
+  surfaceClearanceMeters = DEFAULT_WALL_OCCLUSION_CLEARANCE_M
+): boolean {
+  if (!Number.isFinite(pointDistanceMeters) || pointDistanceMeters <= 0) {
+    return true;
+  }
+  if (nearestWallDistanceMeters === null || !Number.isFinite(nearestWallDistanceMeters)) {
+    return false;
+  }
+  return nearestWallDistanceMeters + surfaceClearanceMeters < pointDistanceMeters;
+}
+
+/**
+ * Shortest Euclidean distance in 2D (CSS pixels) from point (px, py) to segment (ax, ay)-(bx, by).
+ */
+export function pointToSegmentDistance2D(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number
+): { distance: number; t: number } {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq < 1e-8) {
+    return { distance: Math.hypot(px - ax, py - ay), t: 0 };
+  }
+  const rawT = ((px - ax) * dx + (py - ay) * dy) / lenSq;
+  const t = Math.max(0, Math.min(1, rawT));
+  const projX = ax + dx * t;
+  const projY = ay + dy * t;
+  return { distance: Math.hypot(px - projX, py - projY), t };
+}
+
+/**
+ * Shortest Euclidean distance in 2D (CSS pixels) from point (px, py) to an axis-aligned rectangle.
+ * Returns 0 when inside the rectangle.
+ */
+export function pointToRectDistance2D(
+  px: number,
+  py: number,
+  minX: number,
+  minY: number,
+  maxX: number,
+  maxY: number
+): number {
+  const dx = px < minX ? minX - px : px > maxX ? px - maxX : 0;
+  const dy = py < minY ? minY - py : py > maxY ? py - maxY : 0;
+  return Math.hypot(dx, dy);
+}
+
+/**
+ * Resolves the frontmost visible annotation candidate within screen-space tolerance.
+ * Rejects any candidate occluded behind a wall or outside maxScreenTolerancePx.
+ * When two visible marks sit on the same wall surface (within SAME_SURFACE_DEPTH_TIE_M),
+ * prioritizes ruler label > stroke/shape > wall_fill and tighter screen proximity.
+ */
+export function resolveFrontmostAnnotationHit(
+  candidates: ReadonlyArray<AnnotationPickCandidate>,
+  maxScreenTolerancePx = DEFAULT_ANNOTATION_SCREEN_TOLERANCE_PX
+): AnnotationPickCandidate | null {
+  const visible = candidates.filter(
+    (c) =>
+      Boolean(c.annotationId) &&
+      !c.occludedByWall &&
+      Number.isFinite(c.distance) &&
+      c.distance > 0 &&
+      Number.isFinite(c.screenDistancePx) &&
+      c.screenDistancePx <= maxScreenTolerancePx
+  );
+  if (visible.length === 0) return null;
+
+  const sorted = [...visible].sort((a, b) => {
+    const depthDiff = Math.abs(a.distance - b.distance);
+    if (depthDiff <= SAME_SURFACE_DEPTH_TIE_M) {
+      const kindDiff = PIECE_KIND_PRIORITY[a.kind] - PIECE_KIND_PRIORITY[b.kind];
+      if (kindDiff !== 0) return kindDiff;
+      const screenDiff = a.screenDistancePx - b.screenDistancePx;
+      if (Math.abs(screenDiff) > 1.5) return screenDiff;
+    }
+    return a.distance - b.distance;
+  });
+
+  return sorted[0] ?? null;
+}
+
+/**
+ * Returns true if the event target is a text-entry control where editing/shortcut keys
+ * (Delete, Backspace, Ctrl/Cmd+Z, single-key tool shortcuts) should NOT hijack typing.
+ */
+export function isTextEntryTarget(target: EventTarget | null): boolean {
+  if (!target || typeof target !== 'object') return false;
+  const el = target as {
+    tagName?: string;
+    isContentEditable?: boolean;
+    getAttribute?: (name: string) => string | null;
+  };
+  if (el.isContentEditable) return true;
+  const tag = (el.tagName ?? '').toUpperCase();
+  if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') {
+    return true;
+  }
+  const role = el.getAttribute?.('role');
+  if (role === 'textbox' || role === 'searchbox' || role === 'combobox') {
+    return true;
+  }
+  return false;
+}
+

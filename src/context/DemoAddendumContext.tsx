@@ -1104,8 +1104,8 @@ export const DemoAddendumProvider: React.FC<{ children: React.ReactNode }> = ({ 
           actorName: activePersona.displayName,
           occurredAt: new Date(demoClockUtcMs).toISOString(),
           summary: isConflict
-            ? 'Izin submitted for an already-Present shift — routed to correction workflow.'
-            : `Izin submitted with ${input.evidencePhotoIds.length} private file(s) — pending Foreman review.`,
+            ? 'Leave request submitted for an already-Present shift — routed to correction workflow.'
+            : `Leave request submitted with ${input.evidencePhotoIds.length} private file(s) — Leave request pending.`,
           metadata: {},
         },
         ...prev,
@@ -1122,7 +1122,15 @@ export const DemoAddendumProvider: React.FC<{ children: React.ReactNode }> = ({ 
         ok: true,
         message: isConflict
           ? 'Routed to attendance correction workflow (shift already marked Present).'
-          : `Izin submitted (Request: ${status === 'pending' ? 'Pending' : 'Awaiting Foreman assignment'}; Attendance remains ${derived.attendanceStatus.replace('_', ' ')}).`,
+          : `Leave request submitted (Leave request pending; Attendance remains ${
+              derived.attendanceStatus === 'no_record_yet'
+                ? 'Pending check-in'
+                : derived.attendanceStatus === 'alfa'
+                  ? 'Absent'
+                  : derived.attendanceStatus === 'izin'
+                    ? 'Approved leave'
+                    : derived.attendanceStatus
+            }).`,
       };
     },
     [shifts, records, members, demoClockUtcMs, activePersona]
@@ -1180,12 +1188,12 @@ export const DemoAddendumProvider: React.FC<{ children: React.ReactNode }> = ({ 
             actorUserId: activePersona.userId,
             actorName: activePersona.displayName,
             occurredAt: new Date(demoClockUtcMs).toISOString(),
-            summary: `Izin rejected by Foreman (${activePersona.displayName}).`,
+            summary: `Leave request rejected by Foreman (${activePersona.displayName}).`,
             metadata: {},
           },
           ...prev,
         ]);
-        return { ok: true, message: 'Izin rejected. Attendance status remains unchanged.' };
+        return { ok: true, message: 'Leave request rejected. Attendance status remains unchanged.' };
       }
 
       const existingRec = records[shift.id] ?? null;
@@ -1242,13 +1250,16 @@ export const DemoAddendumProvider: React.FC<{ children: React.ReactNode }> = ({ 
           actorUserId: activePersona.userId,
           actorName: activePersona.displayName,
           occurredAt: new Date(demoClockUtcMs).toISOString(),
-          summary: `Izin approved by Foreman (${activePersona.displayName}). Original workday (${shift.workDate}) marked Izin.`,
+          summary: `Leave approved by Foreman (${activePersona.displayName}). Original workday (${shift.workDate}) marked Approved leave.`,
           metadata: {},
         },
         ...prev,
       ]);
 
-      return { ok: true, message: 'Izin approved. Attendance updated to Izin for the original workday.' };
+      return {
+        ok: true,
+        message: 'Leave approved. Attendance updated to Approved leave for the original workday.',
+      };
     },
     [izinRequests, shifts, activePersona, demoClockUtcMs, records]
   );

@@ -121,10 +121,10 @@ export const DemoUsersAccessPage: React.FC = () => {
             {/* Header */}
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <h1 className="text-[24px] leading-[30px] font-bold text-[#1B2A4A]">Team</h1>
+                <h1 className="vonta-page-title text-[#1B2A4A]">Team</h1>
                 <p className="mt-1 text-[14px] text-[#4F5C67]">
                   Active project members for {state.project.name}. Attendance % reflects finalized
-                  Present / (Present + Alfa) worker-days for Nov 2026 (Owners exempt).
+                  Present / (Present + Absent) worker-days for Nov 2026 (Owners exempt).
                 </p>
               </div>
 
@@ -231,7 +231,8 @@ export const DemoUsersAccessPage: React.FC = () => {
                         Project tenure
                       </th>
                       <th scope="col" className="w-[18%] px-5 py-3.5 text-right">
-                        Attendance %
+                        Attendance <span aria-hidden="true">%</span>
+                        <span className="sr-only">percentage</span>
                       </th>
                     </tr>
                   </thead>
@@ -320,7 +321,7 @@ export const DemoUsersAccessPage: React.FC = () => {
                               title={
                                 m.role === 'owner'
                                   ? 'Owner exempt from attendance schedules'
-                                  : 'Present / (Present + Alfa) for Nov 2026'
+                                  : 'Present / (Present + Absent) for Nov 2026'
                               }
                             >
                               {pct}
@@ -390,7 +391,7 @@ export const PrivateUsersAccessPage: React.FC = () => {
               <div className="flex items-center gap-2">
                 <Users className="h-5 w-5 text-[#A64011]" aria-hidden="true" />
                 <div>
-                  <h1 className="text-[24px] leading-[30px] font-bold text-[#1B2A4A]">Team</h1>
+                  <h1 className="vonta-page-title text-[#1B2A4A]">Team</h1>
                   <p className="text-[14px] text-[#4F5C67]">
                     Active members of {project?.name ?? 'this project'}.
                   </p>
@@ -422,7 +423,8 @@ export const PrivateUsersAccessPage: React.FC = () => {
                       Project tenure
                     </th>
                     <th scope="col" className="w-[18%] px-5 py-3.5 text-right">
-                      Attendance %
+                      Attendance <span aria-hidden="true">%</span>
+                      <span className="sr-only">percentage</span>
                     </th>
                   </tr>
                 </thead>

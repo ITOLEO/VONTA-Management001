@@ -202,16 +202,13 @@ export function ProjectSettingsPage() {
             <div className="min-w-0 flex-1 max-w-[780px]">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                  <h1 className="text-[26px] leading-[32px] font-bold tracking-tight text-[#1B2A4A]">
+                  <h1 className="vonta-page-title text-[#1B2A4A]">
                     Project settings
                   </h1>
                   <p className="mt-1 text-[14px] leading-[20px] text-[#4F5C67]">
                     Configuration, access, and blueprints for {state.project.name}.
                   </p>
                 </div>
-                <span className="rounded-md border border-[#D9DEE2] bg-white px-2.5 py-1 text-[12px] leading-[16px] font-semibold text-[#A64011]">
-                  {state.project.demoLabel}
-                </span>
               </div>
 
               {legacyHistoryRequested && (

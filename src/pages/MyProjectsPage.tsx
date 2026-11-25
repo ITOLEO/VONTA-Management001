@@ -67,10 +67,10 @@ export function MyProjectsPage() {
             {/* Directory Title */}
             <div className="flex flex-wrap items-end justify-between gap-3">
               <div>
-                <p className="text-[13px] leading-[18px] font-semibold text-[#A64011]">
-                  {state.project.demoLabel}
+                <p className="text-[13px] leading-[18px] font-medium text-[#4F5C67]">
+                  Sample workspace · Isolated local session
                 </p>
-                <h1 className="mt-0.5 text-[26px] leading-[32px] font-bold tracking-tight text-[#1B2A4A]">
+                <h1 className="vonta-page-title mt-0.5 text-[#1B2A4A]">
                   Projects
                 </h1>
               </div>

@@ -343,7 +343,7 @@ export function RoomsPicker({
         aria-haspopup="dialog"
         aria-controls="workspace-rooms-popover"
         data-testid="rooms-trigger-button"
-        className={`inline-flex min-h-[44px] items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 text-[14px] leading-[20px] font-medium transition-colors md:min-h-[38px] ${
+        className={`inline-flex min-h-[44px] items-center gap-1.5 whitespace-nowrap rounded-lg border px-2 text-[13px] leading-[18px] font-medium transition-colors md:min-h-[36px] ${
           open || activeRoom
             ? 'border-[#D4652F] bg-[#D4652F]/10 text-[#1B2A4A]'
             : 'border-[#D9DEE2] bg-white text-[#1B2A4A] hover:bg-[#F4F3EF]'

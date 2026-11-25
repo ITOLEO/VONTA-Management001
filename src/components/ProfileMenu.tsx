@@ -1,7 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
-  ChevronDown,
   Clock,
   LogIn,
   LogOut,
@@ -39,10 +38,11 @@ const THEME_OPTIONS: Array<{ value: ThemeChoice; label: string; icon: typeof Sun
 ];
 
 /**
- * Right-aligned top-bar Profile trigger and popover (Field Operations Revision):
- * - Trigger shows circular portrait photo (or initials fallback), display name, and smaller registered email.
- * - Popover order: Identity (with distinct demo label when in demo mode) -> Account -> Theme -> Timezone -> Sign out.
- * - Closes on Escape (returning focus to trigger) or outside click.
+ * Right-aligned top-bar Profile identity control and account menu (Stage 03):
+ * - Placed directly on the header surface with no enclosing rectangle and no chevron.
+ * - Order: display name and smaller email first (right-aligned), circular portrait (or initials fallback) on the right.
+ * - Entire identity control is operable by pointer and keyboard; full email stays readable in the account menu.
+ * - Closes on Escape (restoring focus to trigger) or outside click.
  */
 export function ProfileMenu({
   mode,
@@ -61,6 +61,7 @@ export function ProfileMenu({
   const location = useLocation();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
   const { theme, setTheme } = useThemePreference();
 
   const initials =
@@ -74,12 +75,19 @@ export function ProfileMenu({
   useEffect(() => {
     if (!open) return;
 
+    const raf = window.requestAnimationFrame(() => {
+      const firstItem = popoverRef.current?.querySelector<HTMLElement>(
+        '[role="menuitem"], [role="menuitemradio"]'
+      );
+      firstItem?.focus({ preventScroll: true });
+    });
+
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
         onOpenChange(false);
         window.requestAnimationFrame(() => {
-          triggerRef.current?.focus();
+          triggerRef.current?.focus({ preventScroll: true });
         });
       }
     };
@@ -93,6 +101,7 @@ export function ProfileMenu({
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('mousedown', onPointerDown);
     return () => {
+      window.cancelAnimationFrame(raf);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('mousedown', onPointerDown);
     };
@@ -104,17 +113,19 @@ export function ProfileMenu({
       : '';
   const accountHref = `${accountPath}${returnToParam}`;
 
-  const renderAvatar = (sizeClass: string) =>
+  const renderAvatar = (sizeClass: string, testId?: string) =>
     avatarUrl ? (
       <img
         src={avatarUrl}
         alt=""
         aria-hidden="true"
+        data-testid={testId}
         className={`${sizeClass} shrink-0 rounded-full border border-[#D9DEE2] object-cover`}
       />
     ) : (
       <span
         aria-hidden="true"
+        data-testid={testId}
         className={`${sizeClass} inline-flex shrink-0 items-center justify-center rounded-full bg-[#1B2A4A] text-[12px] font-semibold text-white`}
       >
         {initials}
@@ -127,51 +138,57 @@ export function ProfileMenu({
         ref={triggerRef}
         type="button"
         onClick={() => onOpenChange(!open)}
+        onKeyDown={(e) => {
+          if (e.key === 'ArrowDown' && !open) {
+            e.preventDefault();
+            onOpenChange(true);
+          }
+        }}
         aria-expanded={open}
         aria-haspopup="menu"
-        aria-label="Profile"
+        aria-label={`Profile: ${displayName}`}
         data-testid={triggerTestId}
-        className="inline-flex min-h-[42px] items-center gap-2 rounded-lg border border-[#D9DEE2] bg-white px-2 py-1 text-left text-[#1B2A4A] transition-colors hover:bg-[#F4F3EF] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE]"
+        className="inline-flex min-h-[36px] shrink-0 items-center gap-2 rounded-lg bg-transparent p-0.5 text-right text-[#1B2A4A] transition-colors hover:bg-[#F4F3EF] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE] sm:px-1.5 sm:py-1"
       >
-        {renderAvatar('h-8 w-8')}
-        <span className="hidden min-w-0 flex-col leading-tight sm:flex">
+        <span className="hidden min-w-0 flex-col items-end leading-tight sm:flex">
           <span
             data-testid="profile-trigger-name"
-            className="max-w-[126px] truncate text-[13px] font-semibold text-[#1B2A4A] 2xl:max-w-[144px]"
+            className="max-w-[116px] truncate text-[13.5px] leading-[18px] font-semibold text-[#1B2A4A] xl:max-w-[126px] 2xl:max-w-[156px]"
           >
             {displayName}
           </span>
           <span
             data-testid="profile-trigger-email"
-            className="max-w-[126px] truncate text-[11px] font-normal text-[#4F5C67] 2xl:max-w-[144px]"
+            className="max-w-[116px] truncate text-[11.5px] leading-[15px] font-normal text-[#4F5C67] xl:max-w-[126px] 2xl:max-w-[156px]"
           >
             {emailOrSubtitle}
           </span>
         </span>
-        <ChevronDown className="hidden h-3.5 w-3.5 shrink-0 text-[#4F5C67] sm:inline" aria-hidden="true" />
+        {renderAvatar('h-8 w-8', 'profile-trigger-avatar')}
       </button>
 
       {open && (
         <div
+          ref={popoverRef}
           role="menu"
           aria-label="Profile menu"
           data-testid="profile-menu-popover"
-          className="fixed right-3 top-[64px] z-50 w-[min(300px,calc(100vw-24px))] rounded-xl border border-[#D9DEE2] bg-white p-2 shadow-xl sm:absolute sm:right-0 sm:top-full sm:mt-1.5 sm:w-[300px]"
+          className="fixed right-3 top-[64px] z-50 w-[min(316px,calc(100vw-24px))] rounded-xl border border-[#D9DEE2] bg-white p-2 shadow-xl sm:absolute sm:right-0 sm:top-full sm:mt-1.5 sm:w-[316px]"
         >
-          {/* 1. Identity */}
+          {/* 1. Identity (full email kept readable even when header truncates) */}
           <div className="rounded-lg bg-[#F4F3EF]/75 px-3 py-2.5">
-            <div className="flex items-center gap-2.5">
-              {renderAvatar('h-9 w-9')}
+            <div className="flex items-start gap-2.5">
+              {renderAvatar('h-9 w-9 mt-0.5')}
               <div className="min-w-0 flex-1">
                 <div
                   data-testid="profile-popover-name"
-                  className="truncate text-[14px] leading-[19px] font-semibold text-[#1B2A4A]"
+                  className="text-[14px] leading-[19px] font-semibold text-[#1B2A4A] break-words"
                 >
                   {displayName}
                 </div>
                 <div
                   data-testid="profile-popover-email"
-                  className="truncate text-[12px] leading-[16px] text-[#4F5C67]"
+                  className="mt-0.5 text-[12px] leading-[16px] text-[#4F5C67] break-all"
                 >
                   {emailOrSubtitle}
                 </div>
@@ -192,7 +209,7 @@ export function ProfileMenu({
             role="menuitem"
             onClick={() => onOpenChange(false)}
             data-testid="menu-account-link"
-            className="flex min-h-[42px] items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-[14px] leading-[20px] font-medium text-[#1B2A4A] transition-colors hover:bg-[#F4F3EF] md:min-h-[38px]"
+            className="flex min-h-[42px] items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-[14px] leading-[20px] font-medium text-[#1B2A4A] transition-colors hover:bg-[#F4F3EF] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#0B63CE] md:min-h-[38px]"
           >
             <span>Account</span>
             <span className="text-[12px] text-[#4F5C67]">Settings</span>
@@ -241,14 +258,14 @@ export function ProfileMenu({
             to={`${accountPath}?section=preferences${returnToParam ? `&returnTo=${encodeURIComponent(location.pathname)}` : ''}`}
             role="menuitem"
             onClick={() => onOpenChange(false)}
-            className="flex min-h-[42px] items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-[13px] leading-[18px] transition-colors hover:bg-[#F4F3EF] md:min-h-[38px]"
+            className="flex min-h-[42px] items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-[13px] leading-[18px] transition-colors hover:bg-[#F4F3EF] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#0B63CE] md:min-h-[38px]"
           >
             <span className="flex items-center gap-1.5 font-medium text-[#1B2A4A]">
               <Clock className="h-3.5 w-3.5 text-[#4F5C67]" aria-hidden="true" />
               Timezone
             </span>
             <span
-              className="max-w-[140px] truncate text-[#4F5C67]"
+              className="max-w-[150px] truncate text-[#4F5C67]"
               data-testid="profile-current-timezone"
             >
               {timezoneLabel}
@@ -267,7 +284,7 @@ export function ProfileMenu({
                 onSignOut?.();
               }}
               data-testid="menu-sign-out"
-              className="flex min-h-[42px] w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[14px] leading-[20px] font-medium text-[#B42318] transition-colors hover:bg-[#FEF3F2] md:min-h-[38px]"
+              className="flex min-h-[42px] w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[14px] leading-[20px] font-medium text-[#B42318] transition-colors hover:bg-[#FEF3F2] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#0B63CE] md:min-h-[38px]"
             >
               <LogOut className="h-4 w-4" aria-hidden="true" />
               Sign out
@@ -282,7 +299,7 @@ export function ProfileMenu({
                     onOpenChange(false);
                     onResetDemo();
                   }}
-                  className="flex min-h-[42px] w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[14px] leading-[20px] font-medium text-[#1B2A4A] transition-colors hover:bg-[#F4F3EF] md:min-h-[38px]"
+                  className="flex min-h-[42px] w-full items-center gap-2 rounded-lg px-3 py-1.5 text-[14px] leading-[20px] font-medium text-[#1B2A4A] transition-colors hover:bg-[#F4F3EF] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#0B63CE] md:min-h-[38px]"
                 >
                   <RotateCcw className="h-4 w-4 text-[#4F5C67]" aria-hidden="true" />
                   Reset demo data
@@ -292,7 +309,7 @@ export function ProfileMenu({
                 to="/auth/sign-in"
                 role="menuitem"
                 onClick={() => onOpenChange(false)}
-                className="flex min-h-[42px] items-center gap-2 rounded-lg px-3 py-1.5 text-[14px] leading-[20px] font-medium text-[#1B2A4A] transition-colors hover:bg-[#F4F3EF] md:min-h-[38px]"
+                className="flex min-h-[42px] items-center gap-2 rounded-lg px-3 py-1.5 text-[14px] leading-[20px] font-medium text-[#1B2A4A] transition-colors hover:bg-[#F4F3EF] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#0B63CE] md:min-h-[38px]"
               >
                 <LogIn className="h-4 w-4 text-[#4F5C67]" aria-hidden="true" />
                 Sign in
@@ -301,7 +318,7 @@ export function ProfileMenu({
                 to="/"
                 role="menuitem"
                 onClick={() => onOpenChange(false)}
-                className="flex min-h-[42px] items-center gap-2 rounded-lg px-3 py-1.5 text-[14px] leading-[20px] font-medium text-[#4F5C67] transition-colors hover:bg-[#F4F3EF] hover:text-[#1B2A4A] md:min-h-[38px]"
+                className="flex min-h-[42px] items-center gap-2 rounded-lg px-3 py-1.5 text-[14px] leading-[20px] font-medium text-[#4F5C67] transition-colors hover:bg-[#F4F3EF] hover:text-[#1B2A4A] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#0B63CE] md:min-h-[38px]"
               >
                 <LogOut className="h-4 w-4" aria-hidden="true" />
                 Sign out of demo

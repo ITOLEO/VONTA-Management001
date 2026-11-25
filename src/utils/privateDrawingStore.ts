@@ -57,6 +57,7 @@ export type PersistedAnnotationTool = Exclude<DrawingToolType, 'cursor' | 'pan' 
 export interface PrivateSurfaceAnnotation {
   id: string;
   formatVersion: number;
+  deviceId?: string;
   environment: 'demo' | 'live';
   accountId: string;
   projectId: string;
@@ -89,6 +90,7 @@ export interface PrivateSurfaceAnnotation {
 }
 
 export interface PrivateDrawingScope {
+  deviceId?: string;
   environment: 'demo' | 'live';
   accountId: string;
   projectId: string;
@@ -104,14 +106,73 @@ export interface DrawingLoadResult {
   warning: string | null;
 }
 
+export interface DrawingWriteResult {
+  ok: boolean;
+  storageMode: DrawingStorageMode;
+  warning: string | null;
+  error?: string;
+}
+
 const DB_NAME = 'vonta_private_drawings_db_v1';
 const STORE_NAME = 'surface_annotations';
 const DB_VERSION = 1;
+const DEVICE_ID_STORAGE_KEY = 'vonta_local_device_id_v1';
+const FALLBACK_WARNING =
+  'Temporary on this device. Browser storage is unavailable, so local marks clear when this tab closes.';
 
 const memoryFallbackStore = new Map<string, PrivateSurfaceAnnotation[]>();
+let cachedDeviceId: string | null = null;
+let storeOperationQueue: Promise<unknown> = Promise.resolve();
+
+function enqueueStoreOperation<T>(op: () => Promise<T>): Promise<T> {
+  const next = storeOperationQueue.then(op, op);
+  storeOperationQueue = next.then(
+    () => undefined,
+    () => undefined
+  );
+  return next;
+}
+
+/**
+ * Returns a stable device-local identifier for this browser profile so private annotations
+ * and history stay strictly scoped to device, environment, account, project, area, and model version.
+ */
+export function getLocalDeviceId(): string {
+  if (cachedDeviceId) return cachedDeviceId;
+  if (typeof window !== 'undefined') {
+    try {
+      const existing = window.localStorage.getItem(DEVICE_ID_STORAGE_KEY);
+      if (existing && existing.trim().length > 0) {
+        cachedDeviceId = existing.trim();
+        return cachedDeviceId;
+      }
+      const generated =
+        typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? `dev-${crypto.randomUUID().slice(0, 12)}`
+          : `dev-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+      window.localStorage.setItem(DEVICE_ID_STORAGE_KEY, generated);
+      cachedDeviceId = generated;
+      return cachedDeviceId;
+    } catch {
+      // Ignore storage restrictions (incognito/sandbox)
+    }
+  }
+  cachedDeviceId = 'device-local';
+  return cachedDeviceId;
+}
+
+export function resolveScopeDeviceId(scope: { deviceId?: string }): string {
+  const explicit = scope.deviceId?.trim();
+  return explicit && explicit.length > 0 ? explicit : getLocalDeviceId();
+}
+
+export function buildLegacyDrawingScopeKey(scope: PrivateDrawingScope): string {
+  return `${scope.environment}::${scope.accountId}::${scope.projectId}::${scope.modelVersionId}::${scope.areaId}`;
+}
 
 export function buildDrawingScopeKey(scope: PrivateDrawingScope): string {
-  return `${scope.environment}::${scope.accountId}::${scope.projectId}::${scope.modelVersionId}::${scope.areaId}`;
+  const deviceId = resolveScopeDeviceId(scope);
+  return `${deviceId}::${scope.environment}::${scope.accountId}::${scope.projectId}::${scope.modelVersionId}::${scope.areaId}`;
 }
 
 export function strokeWidthKeyToPx(key?: DrawingStrokeWidthKey): number {
@@ -198,6 +259,7 @@ export function migratePrivateAnnotationRecord(
   return {
     id: rec.id,
     formatVersion: PRIVATE_DRAWING_FORMAT_VERSION,
+    deviceId: typeof rec.deviceId === 'string' && rec.deviceId.trim() ? rec.deviceId.trim() : undefined,
     environment: rec.environment === 'live' ? 'live' : 'demo',
     accountId: String(rec.accountId ?? ''),
     projectId: String(rec.projectId ?? ''),
@@ -219,6 +281,33 @@ export function migratePrivateAnnotationRecord(
     isCalibrated: typeof rec.isCalibrated === 'boolean' ? rec.isCalibrated : undefined,
     createdAt: typeof rec.createdAt === 'string' ? rec.createdAt : new Date().toISOString(),
   };
+}
+
+function normalizeForPersistence(
+  annotation: PrivateSurfaceAnnotation,
+  scopeOverride?: PrivateDrawingScope
+): { normalized: PrivateSurfaceAnnotation; scopeKey: string } {
+  const effectiveScope: PrivateDrawingScope = scopeOverride ?? annotation;
+  const deviceId = resolveScopeDeviceId(effectiveScope);
+  const scopeKey = buildDrawingScopeKey({ ...effectiveScope, deviceId });
+  const px = clampStrokeWidthPx(
+    annotation.strokeWidthPx ?? strokeWidthKeyToPx(annotation.strokeWidth)
+  );
+  const normalized: PrivateSurfaceAnnotation = {
+    ...annotation,
+    deviceId,
+    environment: effectiveScope.environment,
+    accountId: effectiveScope.accountId,
+    projectId: effectiveScope.projectId,
+    modelVersionId: effectiveScope.modelVersionId,
+    areaId: effectiveScope.areaId,
+    formatVersion: PRIVATE_DRAWING_FORMAT_VERSION,
+    strokeWidthPx: px,
+    strokeWidth: pxToStrokeWidthKey(px),
+    lineStyle: annotation.lineStyle ?? 'solid',
+    colorHex: normalizeHexColor(annotation.colorHex) ?? '#E11D48',
+  };
+  return { normalized, scopeKey };
 }
 
 function openDrawingDb(): Promise<IDBDatabase> {
@@ -244,132 +333,222 @@ interface StoredRow extends PrivateSurfaceAnnotation {
   scopeKey: string;
 }
 
-export async function loadPrivateAnnotations(
-  scope: PrivateDrawingScope
-): Promise<DrawingLoadResult> {
-  const scopeKey = buildDrawingScopeKey(scope);
-  try {
-    const db = await openDrawingDb();
-    const rows = await new Promise<StoredRow[]>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readonly');
-      const store = tx.objectStore(STORE_NAME);
-      const index = store.index('scopeKey');
-      const req = index.getAll(scopeKey);
-      req.onsuccess = () => resolve((req.result as StoredRow[]) ?? []);
-      req.onerror = () => reject(req.error ?? new Error('Failed to read private drawings'));
-    });
-    db.close();
-    const migrated: PrivateSurfaceAnnotation[] = [];
-    for (const row of rows) {
-      const clean = migratePrivateAnnotationRecord(row);
-      if (clean) migrated.push(clean);
+export function loadPrivateAnnotations(scope: PrivateDrawingScope): Promise<DrawingLoadResult> {
+  return enqueueStoreOperation(async () => {
+    const resolvedDeviceId = resolveScopeDeviceId(scope);
+    const scopeKey = buildDrawingScopeKey({ ...scope, deviceId: resolvedDeviceId });
+    const legacyKey = buildLegacyDrawingScopeKey(scope);
+    const shouldCheckLegacy = !scope.deviceId || scope.deviceId === getLocalDeviceId();
+
+    try {
+      const db = await openDrawingDb();
+      const rows = await new Promise<StoredRow[]>((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readonly');
+        const store = tx.objectStore(STORE_NAME);
+        const index = store.index('scopeKey');
+        const reqCurrent = index.getAll(scopeKey);
+        let currentRows: StoredRow[] = [];
+        let legacyRows: StoredRow[] = [];
+
+        reqCurrent.onsuccess = () => {
+          currentRows = (reqCurrent.result as StoredRow[]) ?? [];
+          if (!shouldCheckLegacy) {
+            resolve(currentRows);
+            return;
+          }
+          const reqLegacy = index.getAll(legacyKey);
+          reqLegacy.onsuccess = () => {
+            legacyRows = (reqLegacy.result as StoredRow[]) ?? [];
+            const seen = new Set(currentRows.map((r) => r.id));
+            const merged = [...currentRows];
+            for (const row of legacyRows) {
+              if (!seen.has(row.id)) merged.push(row);
+            }
+            resolve(merged);
+          };
+          reqLegacy.onerror = () =>
+            reject(reqLegacy.error ?? new Error('Failed to read legacy private drawings'));
+        };
+        reqCurrent.onerror = () =>
+          reject(reqCurrent.error ?? new Error('Failed to read private drawings'));
+      });
+      db.close();
+
+      const migrated: PrivateSurfaceAnnotation[] = [];
+      for (const row of rows) {
+        const clean = migratePrivateAnnotationRecord(row);
+        if (clean) {
+          migrated.push({ ...clean, deviceId: clean.deviceId ?? resolvedDeviceId });
+        }
+      }
+      migrated.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      return {
+        data: migrated,
+        storageMode: 'indexeddb',
+        warning: null,
+      };
+    } catch {
+      const list = memoryFallbackStore.get(scopeKey) ?? [];
+      return {
+        data: [...list],
+        storageMode: 'memory-fallback',
+        warning: FALLBACK_WARNING,
+      };
     }
-    migrated.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-    return {
-      data: migrated,
-      storageMode: 'indexeddb',
-      warning: null,
-    };
-  } catch {
-    const list = memoryFallbackStore.get(scopeKey) ?? [];
-    return {
-      data: [...list],
-      storageMode: 'memory-fallback',
-      warning:
-        'Temporary on this device. Browser storage is unavailable, so local marks clear when this tab closes.',
-    };
-  }
+  });
 }
 
-export async function savePrivateAnnotation(
+export function savePrivateAnnotation(
   annotation: PrivateSurfaceAnnotation
-): Promise<{ storageMode: DrawingStorageMode; warning: string | null }> {
-  const scopeKey = buildDrawingScopeKey(annotation);
-  const px = clampStrokeWidthPx(
-    annotation.strokeWidthPx ?? strokeWidthKeyToPx(annotation.strokeWidth)
-  );
-  const normalized: PrivateSurfaceAnnotation = {
-    ...annotation,
-    formatVersion: PRIVATE_DRAWING_FORMAT_VERSION,
-    strokeWidthPx: px,
-    strokeWidth: pxToStrokeWidthKey(px),
-    lineStyle: annotation.lineStyle ?? 'solid',
-    colorHex: normalizeHexColor(annotation.colorHex) ?? '#E11D48',
-  };
-  try {
-    const db = await openDrawingDb();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
-      const row: StoredRow = { ...normalized, scopeKey };
-      const req = store.put(row);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error ?? new Error('Failed to save private drawing'));
-    });
-    db.close();
-    return { storageMode: 'indexeddb', warning: null };
-  } catch {
-    const existing = memoryFallbackStore.get(scopeKey) ?? [];
-    memoryFallbackStore.set(scopeKey, [
-      ...existing.filter((x) => x.id !== normalized.id),
-      normalized,
-    ]);
-    return {
-      storageMode: 'memory-fallback',
-      warning:
-        'Temporary on this device. Browser storage is unavailable, so local marks clear when this tab closes.',
-    };
-  }
+): Promise<DrawingWriteResult> {
+  return enqueueStoreOperation(async () => {
+    const { normalized, scopeKey } = normalizeForPersistence(annotation);
+    try {
+      const db = await openDrawingDb();
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const row: StoredRow = { ...normalized, scopeKey };
+        store.put(row);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error ?? new Error('Failed to save private drawing'));
+        tx.onabort = () => reject(tx.error ?? new Error('Aborted saving private drawing'));
+      });
+      db.close();
+      return { ok: true, storageMode: 'indexeddb', warning: null };
+    } catch {
+      const existing = memoryFallbackStore.get(scopeKey) ?? [];
+      memoryFallbackStore.set(scopeKey, [
+        ...existing.filter((x) => x.id !== normalized.id),
+        normalized,
+      ]);
+      return {
+        ok: true,
+        storageMode: 'memory-fallback',
+        warning: FALLBACK_WARNING,
+      };
+    }
+  });
 }
 
-export async function deletePrivateAnnotation(
+export function savePrivateAnnotationsBatch(
+  scope: PrivateDrawingScope,
+  annotations: PrivateSurfaceAnnotation[]
+): Promise<DrawingWriteResult> {
+  return enqueueStoreOperation(async () => {
+    const resolvedDeviceId = resolveScopeDeviceId(scope);
+    const effectiveScope: PrivateDrawingScope = { ...scope, deviceId: resolvedDeviceId };
+    const scopeKey = buildDrawingScopeKey(effectiveScope);
+    const prepared = annotations.map((ann) => normalizeForPersistence(ann, effectiveScope));
+
+    try {
+      const db = await openDrawingDb();
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        for (const item of prepared) {
+          const row: StoredRow = { ...item.normalized, scopeKey: item.scopeKey };
+          store.put(row);
+        }
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error ?? new Error('Failed to restore private drawings'));
+        tx.onabort = () => reject(tx.error ?? new Error('Aborted restoring private drawings'));
+      });
+      db.close();
+      return { ok: true, storageMode: 'indexeddb', warning: null };
+    } catch {
+      const existing = memoryFallbackStore.get(scopeKey) ?? [];
+      const byId = new Map(existing.map((item) => [item.id, item]));
+      for (const item of prepared) {
+        byId.set(item.normalized.id, item.normalized);
+      }
+      memoryFallbackStore.set(scopeKey, Array.from(byId.values()));
+      return {
+        ok: true,
+        storageMode: 'memory-fallback',
+        warning: FALLBACK_WARNING,
+      };
+    }
+  });
+}
+
+export function deletePrivateAnnotation(
   scope: PrivateDrawingScope,
   annotationId: string
-): Promise<void> {
-  const scopeKey = buildDrawingScopeKey(scope);
-  try {
-    const db = await openDrawingDb();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
-      const req = store.delete(annotationId);
-      req.onsuccess = () => resolve();
-      req.onerror = () => reject(req.error ?? new Error('Failed to delete private drawing'));
-    });
-    db.close();
-  } catch {
-    const existing = memoryFallbackStore.get(scopeKey) ?? [];
-    memoryFallbackStore.set(
-      scopeKey,
-      existing.filter((x) => x.id !== annotationId)
-    );
-  }
+): Promise<DrawingWriteResult> {
+  return enqueueStoreOperation(async () => {
+    const scopeKey = buildDrawingScopeKey(scope);
+    try {
+      const db = await openDrawingDb();
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        store.delete(annotationId);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error ?? new Error('Failed to delete private drawing'));
+        tx.onabort = () => reject(tx.error ?? new Error('Aborted deleting private drawing'));
+      });
+      db.close();
+      return { ok: true, storageMode: 'indexeddb', warning: null };
+    } catch {
+      const existing = memoryFallbackStore.get(scopeKey) ?? [];
+      memoryFallbackStore.set(
+        scopeKey,
+        existing.filter((x) => x.id !== annotationId)
+      );
+      return {
+        ok: true,
+        storageMode: 'memory-fallback',
+        warning: FALLBACK_WARNING,
+      };
+    }
+  });
 }
 
-export async function clearPrivateAnnotationsForScope(
+export function clearPrivateAnnotationsForScope(
   scope: PrivateDrawingScope
-): Promise<void> {
-  const scopeKey = buildDrawingScopeKey(scope);
-  try {
-    const db = await openDrawingDb();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite');
-      const store = tx.objectStore(STORE_NAME);
-      const index = store.index('scopeKey');
-      const req = index.getAllKeys(scopeKey);
-      req.onsuccess = () => {
-        const keys = req.result ?? [];
-        for (const k of keys) {
-          store.delete(k);
-        }
-        resolve();
+): Promise<DrawingWriteResult> {
+  return enqueueStoreOperation(async () => {
+    const scopeKey = buildDrawingScopeKey(scope);
+    const legacyKey = buildLegacyDrawingScopeKey(scope);
+    const shouldClearLegacy = !scope.deviceId || scope.deviceId === getLocalDeviceId();
+
+    try {
+      const db = await openDrawingDb();
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        const index = store.index('scopeKey');
+
+        const deleteKeys = (keys: IDBValidKey[]) => {
+          for (const k of keys) {
+            store.delete(k);
+          }
+        };
+
+        const req = index.getAllKeys(scopeKey);
+        req.onsuccess = () => {
+          deleteKeys(req.result ?? []);
+          if (shouldClearLegacy) {
+            const legacyReq = index.getAllKeys(legacyKey);
+            legacyReq.onsuccess = () => deleteKeys(legacyReq.result ?? []);
+          }
+        };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error ?? new Error('Failed to clear private drawings'));
+        tx.onabort = () => reject(tx.error ?? new Error('Aborted clearing private drawings'));
+      });
+      db.close();
+      return { ok: true, storageMode: 'indexeddb', warning: null };
+    } catch {
+      memoryFallbackStore.delete(scopeKey);
+      return {
+        ok: true,
+        storageMode: 'memory-fallback',
+        warning: FALLBACK_WARNING,
       };
-      req.onerror = () => reject(req.error ?? new Error('Failed to clear private drawings'));
-    });
-    db.close();
-  } catch {
-    memoryFallbackStore.delete(scopeKey);
-  }
+    }
+  });
 }
 
 export function clearTemporaryDrawingMemory(): void {
@@ -379,3 +558,4 @@ export function clearTemporaryDrawingMemory(): void {
 export function isCursorModeTool(tool: DrawingToolType): boolean {
   return tool === 'cursor' || tool === 'pan';
 }
+

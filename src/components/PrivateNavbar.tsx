@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   ChevronDown,
@@ -12,8 +12,13 @@ import { usePrivateProjects } from '../context/PrivateProjectsContext';
 import { useLayoutShell } from '../context/LayoutShellContext';
 import { formatRoleLabel } from '../domain/accountTypes';
 import { getProjectRoutes } from '../utils/projectRoutes';
+import {
+  buildProjectSearchDestinations,
+  type ProjectSearchSources,
+} from '../utils/projectSearch';
 import { ProfileMenu } from './ProfileMenu';
 import { ProjectClock } from './ProjectClock';
+import { ProjectHeaderActions } from './ProjectHeaderActions';
 
 type OpenMenuKey = 'project' | 'warehouse' | 'overflow' | 'profile' | null;
 
@@ -47,10 +52,47 @@ export function PrivateNavbar({
   const navContainerRef = useRef<HTMLDivElement | null>(null);
   const [openMenu, setOpenMenu] = useState<OpenMenuKey>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [actionsCloseSignal, setActionsCloseSignal] = useState(0);
 
   const effectiveProjectId = projectId ?? activeProject?.id ?? '';
   const effectiveProjectName = projectName ?? activeProject?.name ?? 'Project';
-  const routes = effectiveProjectId ? getProjectRoutes('/projects', effectiveProjectId) : null;
+  const routes = useMemo(
+    () => (effectiveProjectId ? getProjectRoutes('/projects', effectiveProjectId) : null),
+    [effectiveProjectId]
+  );
+
+  // Strictly scope live search sources to the active project so switching projects never leaks prior results
+  const scopedActiveProject =
+    activeProject && activeProject.id === effectiveProjectId ? activeProject : null;
+
+  const searchSources = useMemo<ProjectSearchSources | null>(() => {
+    if (!routes || !effectiveProjectId) return null;
+    return {
+      projectScopeKey: `live:${effectiveProjectId}`,
+      destinations: buildProjectSearchDestinations(routes),
+      blueprints: scopedActiveProject
+        ? scopedActiveProject.blueprints.map((bp) => ({
+            id: bp.id,
+            sheetCode: bp.sheetCode,
+            title: bp.fileName || bp.areaName || bp.sheetCode,
+            revision: bp.revision,
+            areaName: bp.areaName,
+            to: routes.blueprintDetailPath(bp.id),
+          }))
+        : null,
+      pins:
+        scopedActiveProject && Array.isArray(scopedActiveProject.pins)
+          ? scopedActiveProject.pins.map((pin) => ({
+              id: pin.id,
+              title: pin.title,
+              roomName: pin.roomName,
+              department: pin.department,
+              status: pin.status,
+              to: pin.slug ? routes.pinDetailPath(pin.slug) : routes.locatePinPath(pin.id),
+            }))
+          : null,
+    };
+  }, [routes, effectiveProjectId, scopedActiveProject]);
 
   useEffect(() => {
     if (!openMenu && !mobileMenuOpen) return;
@@ -115,6 +157,7 @@ export function PrivateNavbar({
     : [];
 
   const toggleMenu = (key: OpenMenuKey) => {
+    setActionsCloseSignal((c) => c + 1);
     setOpenMenu((prev) => (prev === key ? null : key));
   };
 
@@ -125,7 +168,7 @@ export function PrivateNavbar({
   };
 
   const navLinkClass = (active: boolean) =>
-    `inline-flex h-[60px] items-center whitespace-nowrap border-b-2 px-2 text-[13.5px] leading-[20px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#0B63CE] xl:px-2.5 xl:text-[14px] ${
+    `inline-flex h-[60px] items-center whitespace-nowrap border-b-2 px-1.5 text-[13.5px] leading-[20px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#0B63CE] xl:px-2 xl:text-[14px] ${
       active
         ? 'border-[#D4652F] font-semibold text-[#1B2A4A]'
         : 'border-transparent text-[#4F5C67] hover:text-[#1B2A4A]'
@@ -137,9 +180,9 @@ export function PrivateNavbar({
       data-testid="vonta-top-bar"
       className="sticky top-0 z-30 shrink-0 border-b border-[#D9DEE2] bg-white"
     >
-      <div className="flex h-[60px] w-full items-center justify-between gap-2 px-3 sm:px-4 lg:px-5">
+      <div className="flex h-[60px] w-full items-center justify-between gap-1.5 px-2.5 sm:gap-2 sm:px-4 lg:px-4">
         {/* Left: Mobile Rail Trigger + VONTA + Project Switcher or Section Label */}
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex min-w-0 shrink-0 items-center gap-1.5 sm:gap-2">
           {hasContextualRail && (
             <button
               type="button"
@@ -150,7 +193,7 @@ export function PrivateNavbar({
               }}
               aria-label="Open section navigation"
               data-testid="mobile-rail-trigger"
-              className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-[#D9DEE2] bg-white text-[#1B2A4A] transition-colors hover:bg-[#F4F3EF] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE] md:hidden"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-[#D9DEE2] bg-white text-[#1B2A4A] transition-colors hover:bg-[#F4F3EF] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE] md:hidden"
             >
               <PanelLeft className="h-4 w-4" aria-hidden="true" />
             </button>
@@ -158,7 +201,8 @@ export function PrivateNavbar({
 
           <Link
             to="/projects"
-            className="shrink-0 whitespace-nowrap rounded text-[18px] leading-[24px] font-bold tracking-tight text-[#1B2A4A] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE]"
+            data-testid="vonta-navbar-logo"
+            className="shrink-0 whitespace-nowrap rounded text-[17px] leading-[24px] font-bold tracking-tight text-[#1B2A4A] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE] sm:text-[18px]"
           >
             VONTA
           </Link>
@@ -175,7 +219,7 @@ export function PrivateNavbar({
                   aria-expanded={openMenu === 'project'}
                   aria-haspopup="menu"
                   data-testid="project-switcher-trigger"
-                  className="inline-flex min-h-[42px] max-w-[140px] items-center gap-1.5 rounded-lg border border-[#D9DEE2] bg-[#F4F3EF]/60 px-2.5 py-1 text-[13.5px] leading-[20px] font-medium text-[#1B2A4A] transition-colors hover:bg-[#F4F3EF] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE] sm:max-w-[165px] md:min-h-[38px] 2xl:max-w-[195px]"
+                  className="inline-flex min-h-[36px] max-w-[92px] items-center gap-1 rounded-lg border border-[#D9DEE2] bg-[#F4F3EF]/60 px-2 py-1 text-[13px] leading-[18px] font-medium text-[#1B2A4A] transition-colors hover:bg-[#F4F3EF] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE] sm:max-w-[120px] sm:gap-1.5 sm:text-[13.5px] md:min-h-[36px] md:px-2.5 xl:max-w-[144px] 2xl:max-w-[185px]"
                 >
                   <span className="truncate">{effectiveProjectName}</span>
                   <ChevronDown className="h-3.5 w-3.5 shrink-0 text-[#4F5C67]" aria-hidden="true" />
@@ -277,7 +321,7 @@ export function PrivateNavbar({
                 to={routes.modulePath('inventory')}
                 aria-current={isWarehouseActive ? 'page' : undefined}
                 data-testid="nav-warehouse-link"
-                className={`inline-flex h-[60px] items-center whitespace-nowrap border-b-2 pl-2 pr-1 text-[13.5px] leading-[20px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#0B63CE] xl:pl-2.5 xl:text-[14px] ${
+                className={`inline-flex h-[60px] items-center whitespace-nowrap border-b-2 pl-1.5 pr-0.5 text-[13.5px] leading-[20px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#0B63CE] xl:pl-2 xl:text-[14px] ${
                   isWarehouseActive
                     ? 'border-[#D4652F] font-semibold text-[#1B2A4A]'
                     : 'border-transparent text-[#4F5C67] hover:text-[#1B2A4A]'
@@ -333,7 +377,7 @@ export function PrivateNavbar({
               to={routes.teamPath}
               aria-current={isTeamActive ? 'page' : undefined}
               data-testid="nav-team-link"
-              className={`${navLinkClass(isTeamActive)} ${isTeamActive ? 'inline-flex' : 'hidden xl:inline-flex'}`}
+              className={`${navLinkClass(isTeamActive)} ${isTeamActive ? 'inline-flex' : 'hidden min-[1360px]:inline-flex'}`}
             >
               Team
             </Link>
@@ -342,19 +386,19 @@ export function PrivateNavbar({
               to={routes.attendancePath}
               aria-current={isAttendanceActive ? 'page' : undefined}
               data-testid="nav-attendance-link"
-              className={`${navLinkClass(isAttendanceActive)} ${isAttendanceActive ? 'inline-flex' : 'hidden xl:inline-flex'}`}
+              className={`${navLinkClass(isAttendanceActive)} ${isAttendanceActive ? 'inline-flex' : 'hidden min-[1360px]:inline-flex'}`}
             >
               Attendance
             </Link>
 
-            <div className="relative flex h-[60px] items-center xl:hidden">
+            <div className="relative flex h-[60px] items-center min-[1360px]:hidden">
               <button
                 type="button"
                 onClick={() => toggleMenu('overflow')}
                 aria-expanded={openMenu === 'overflow'}
                 aria-haspopup="menu"
                 data-testid="nav-more-modules-trigger"
-                className={`inline-flex h-[60px] items-center gap-1 whitespace-nowrap border-b-2 px-2.5 text-[14px] leading-[20px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#0B63CE] ${
+                className={`inline-flex h-[60px] items-center gap-1 whitespace-nowrap border-b-2 px-2 text-[13.5px] leading-[20px] font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#0B63CE] ${
                   openMenu === 'overflow'
                     ? 'border-[#D4652F] text-[#1B2A4A]'
                     : 'border-transparent text-[#4F5C67] hover:text-[#1B2A4A]'
@@ -397,9 +441,34 @@ export function PrivateNavbar({
           </nav>
         )}
 
-        {/* Far Right: Live Project Clock + Profile Menu + Mobile Module Switcher */}
-        <div className="flex shrink-0 items-center gap-2">
+        {/* Far Right: Header Actions + Live Project Clock + Unboxed Profile Menu + Mobile Module Switcher */}
+        <div className="flex shrink-0 items-center gap-1 sm:gap-1.5 xl:gap-2">
+          {inProjectContext && routes && searchSources && (
+            <>
+              <ProjectHeaderActions
+                projectName={effectiveProjectName}
+                routes={routes}
+                searchSources={searchSources}
+                externalCloseSignal={actionsCloseSignal}
+                onAnyActionOpen={() => {
+                  setOpenMenu(null);
+                  setMobileMenuOpen(false);
+                }}
+              />
+              <span
+                aria-hidden="true"
+                className="hidden h-5 w-px bg-[#D9DEE2] md:inline-block"
+              />
+            </>
+          )}
+
           <ProjectClock timezone={activeProject?.timezone || timezoneLabel} />
+
+          <span
+            aria-hidden="true"
+            className="hidden h-5 w-px bg-[#D9DEE2] md:inline-block"
+          />
+
           <ProfileMenu
             mode="live"
             displayName={displayName}
@@ -408,7 +477,10 @@ export function PrivateNavbar({
             timezoneLabel={timezoneLabel}
             accountPath="/profile"
             open={openMenu === 'profile'}
-            onOpenChange={(next) => setOpenMenu(next ? 'profile' : null)}
+            onOpenChange={(next) => {
+              if (next) setActionsCloseSignal((c) => c + 1);
+              setOpenMenu(next ? 'profile' : null);
+            }}
             onSignOut={handleSignOut}
             triggerTestId="private-profile-trigger"
           />
@@ -418,17 +490,18 @@ export function PrivateNavbar({
               type="button"
               onClick={() => {
                 setOpenMenu(null);
+                setActionsCloseSignal((c) => c + 1);
                 setMobileMenuOpen((v) => !v);
               }}
               aria-expanded={mobileMenuOpen}
               aria-label={mobileMenuOpen ? 'Close module menu' : 'Open module menu'}
               data-testid="mobile-module-menu-trigger"
-              className="inline-flex h-10 w-10 items-center justify-center rounded-lg border border-[#D9DEE2] bg-white text-[#1B2A4A] lg:hidden"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-[#D9DEE2] bg-white text-[#1B2A4A] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0B63CE] lg:hidden"
             >
               {mobileMenuOpen ? (
-                <X className="h-5 w-5" aria-hidden="true" />
+                <X className="h-4 w-4" aria-hidden="true" />
               ) : (
-                <Menu className="h-5 w-5" aria-hidden="true" />
+                <Menu className="h-4 w-4" aria-hidden="true" />
               )}
             </button>
           )}

@@ -104,8 +104,19 @@ export function resolvePinStatusAsOfDate(
   return resolved ?? 'open';
 }
 
+function getMonthLastDay(yearMonth: string): string {
+  const year = Number(yearMonth.slice(0, 4));
+  const month = Number(yearMonth.slice(5, 7));
+  if (!Number.isFinite(year) || !Number.isFinite(month) || month < 1 || month > 12) {
+    return `${yearMonth}-31`;
+  }
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return `${yearMonth}-${String(lastDay).padStart(2, '0')}`;
+}
+
 /**
  * Filters Pins by department and project-local period boundary (as of selectedDate/granularity).
+ * Counts each eligible Pin once by ID.
  */
 export function filterPinsForDashboard(params: {
   pins: SpatialPin[];
@@ -118,12 +129,12 @@ export function filterPinsForDashboard(params: {
   const monthPrefix = selectedDate.slice(0, 7);
   const yearPrefix = selectedDate.slice(0, 4);
 
-  // Determine the cutoff date for evaluating status
+  // Determine the cutoff date for evaluating status in the project timezone
   const cutoffDate =
     granularity === 'day'
       ? selectedDate
       : granularity === 'month'
-        ? `${monthPrefix}-31`
+        ? getMonthLastDay(monthPrefix)
         : `${yearPrefix}-12-31`;
 
   const seen = new Set<string>();
@@ -147,6 +158,7 @@ export function filterPinsForDashboard(params: {
 
 /**
  * Computes Approved Pins ring over the FULL eligible Pin set (no 7-item cap).
+ * Completed strictly means QC-approved (`effectiveStatus === 'approved'`).
  * Returns approvedPercent: null when 0 eligible Pins exist.
  */
 export function computeApprovedRingMetric(
@@ -189,9 +201,9 @@ export function computeApprovedRingMetric(
 }
 
 /**
- * Computes bars for Card 2:
+ * Computes department bars for Card 2 (approved-only chart source):
  * - When `All` departments selected: one bar per department in catalog order.
- * - When one department selected: two bars (`Approved` vs `Outstanding`).
+ * - When one department selected: that department's single bar datum.
  */
 export function computeWorkPinBars(params: {
   eligible: Array<{ pin: SpatialPin; effectiveStatus: PinWorkStatus }>;
@@ -207,23 +219,13 @@ export function computeWorkPinBars(params: {
     const outstanding = total - approved;
     return [
       {
-        key: 'approved',
-        label: 'Approved',
-        colorHex: '#15803D',
+        key: deptMeta?.id ?? departmentFilter,
+        label: departmentFilter,
+        colorHex: deptMeta?.defaultPinColor ?? '#15803D',
         total,
         approved,
-        outstanding: 0,
-        approvedPercent: total > 0 ? Math.round((approved / total) * 100) : 0,
-        outstandingPercent: 0,
-      },
-      {
-        key: 'outstanding',
-        label: 'Outstanding',
-        colorHex: deptMeta?.defaultPinColor ?? '#D4652F',
-        total,
-        approved: 0,
         outstanding,
-        approvedPercent: 0,
+        approvedPercent: total > 0 ? Math.round((approved / total) * 100) : 0,
         outstandingPercent: total > 0 ? Math.round((outstanding / total) * 100) : 0,
       },
     ];
@@ -245,6 +247,159 @@ export function computeWorkPinBars(params: {
       outstandingPercent: total > 0 ? Math.round((outstanding / total) * 100) : 0,
     };
   });
+}
+
+export interface WorkPinBarPlotItem extends DepartmentPinBarDatum {
+  /** Plotted value: approved count in count mode, or department approved/eligible % in percent mode */
+  value: number;
+  /** Fraction of Y-axis top (0..1); strictly 0 when value is 0 */
+  barRatio: number;
+}
+
+export interface WorkPinBarChartModel {
+  bars: WorkPinBarPlotItem[];
+  yMax: number;
+  yTicks: number[];
+  unit: 'Pins' | '%';
+  totalEligible: number;
+  isEmpty: boolean;
+}
+
+export interface AttendanceBarPlotItem {
+  key: 'present' | 'izin' | 'alfa' | 'pending';
+  label: string;
+  count: number;
+  percent: number;
+  value: number;
+  barRatio: number;
+  colorHex: string;
+}
+
+export interface AttendanceBarChartModel {
+  bars: AttendanceBarPlotItem[];
+  yMax: number;
+  yTicks: number[];
+  unit: 'Workers' | 'Shifts' | '%';
+  totalScheduled: number;
+  totalLabel: string;
+  presenceRateLabel: string;
+  isEmpty: boolean;
+}
+
+export function buildAxisTicks(yMax: number, isPercent: boolean): number[] {
+  if (isPercent) return [0, 50, 100];
+  if (yMax <= 0) return [0];
+  if (yMax === 1) return [0, 1];
+  if (yMax === 2) return [0, 1, 2];
+  return [0, Math.round(yMax / 2), yMax];
+}
+
+/**
+ * Builds the Work Pins approved-only bar chart model:
+ * - All mode (count): Y spans 0..total eligible Pins across displayed departments; bars draw approved counts only.
+ * - Single-department mode (count): Y spans 0..that department's total eligible Pins; single bar draws approved count only.
+ * - Percent mode: Y spans 0..100; each bar draws that department's rounded approved/eligible %.
+ */
+export function computeWorkPinBarChartModel(params: {
+  eligible: Array<{ pin: SpatialPin; effectiveStatus: PinWorkStatus }>;
+  departments: ProjectDepartment[];
+  departmentFilter: Department | 'All';
+  valueMode: DashboardValueMode;
+}): WorkPinBarChartModel {
+  const { eligible, departments, departmentFilter, valueMode } = params;
+  const rawBars = computeWorkPinBars({ eligible, departments, departmentFilter });
+  const totalEligible =
+    departmentFilter === 'All'
+      ? rawBars.reduce((sum, b) => sum + b.total, 0)
+      : (rawBars[0]?.total ?? 0);
+
+  const isPercent = valueMode === 'percent';
+  const yMax = isPercent ? 100 : totalEligible;
+  const bars: WorkPinBarPlotItem[] = rawBars.map((bar) => {
+    const value = isPercent ? bar.approvedPercent : bar.approved;
+    const barRatio = yMax > 0 && value > 0 ? Math.min(1, value / yMax) : 0;
+    return {
+      ...bar,
+      value,
+      barRatio,
+    };
+  });
+
+  return {
+    bars,
+    yMax,
+    yTicks: buildAxisTicks(yMax, isPercent),
+    unit: isPercent ? '%' : 'Pins',
+    totalEligible,
+    isEmpty: totalEligible === 0,
+  };
+}
+
+/**
+ * Builds the Attendance status bar chart model:
+ * - Statuses on X: Present, Approved leave, Absent, Pending check-in (using existing internal keys).
+ * - Distribution % uses total scheduled attendances as denominator.
+ * - Presence rate uses Present / (Present + Absent), returning "—" when undefined.
+ * - Zero counts produce strictly 0 barRatio (zero-height bar).
+ */
+export function computeAttendanceBarChartModel(params: {
+  distribution: AttendanceDistributionSummary;
+  granularity: DashboardGranularity;
+  valueMode: DashboardValueMode;
+}): AttendanceBarChartModel {
+  const { distribution, granularity, valueMode } = params;
+  const totalScheduled = distribution.totalScheduled;
+  const isPercent = valueMode === 'percent';
+  const yMax = isPercent ? 100 : totalScheduled;
+
+  const raw: Array<{
+    key: AttendanceBarPlotItem['key'];
+    label: string;
+    count: number;
+    colorHex: string;
+  }> = [
+    { key: 'present', label: 'Present', count: distribution.present, colorHex: '#15803D' },
+    { key: 'izin', label: 'Approved leave', count: distribution.izin, colorHex: '#0B63CE' },
+    { key: 'alfa', label: 'Absent', count: distribution.alfa, colorHex: '#B42318' },
+    { key: 'pending', label: 'Pending check-in', count: distribution.pending, colorHex: '#B45309' },
+  ];
+
+  const bars: AttendanceBarPlotItem[] = raw.map((item) => {
+    const percent = totalScheduled > 0 ? Math.round((item.count / totalScheduled) * 100) : 0;
+    const value = isPercent ? percent : item.count;
+    const barRatio = yMax > 0 && value > 0 ? Math.min(1, value / yMax) : 0;
+    return {
+      ...item,
+      percent,
+      value,
+      barRatio,
+    };
+  });
+
+  const totalLabel =
+    granularity === 'day'
+      ? `${totalScheduled} scheduled ${totalScheduled === 1 ? 'worker' : 'workers'}`
+      : `${totalScheduled} scheduled ${totalScheduled === 1 ? 'attendance' : 'attendances'} across shifts`;
+
+  const presenceRateLabel =
+    distribution.presenceRatePercent !== null
+      ? `${
+          Number.isInteger(distribution.presenceRatePercent)
+            ? distribution.presenceRatePercent
+            : distribution.presenceRatePercent.toFixed(1)
+        }%`
+      : '—';
+
+  return {
+    bars,
+    yMax,
+    yTicks: buildAxisTicks(yMax, isPercent),
+    unit: isPercent ? '%' : granularity === 'day' ? 'Workers' : 'Shifts',
+    totalScheduled,
+    totalLabel,
+    presenceRateLabel,
+    isEmpty: totalScheduled === 0,
+  };
 }
 
 function addDaysIso(isoDate: string, deltaDays: number): string {

@@ -355,7 +355,7 @@ export const DemoAttendancePage: React.FC = () => {
     const file = e.target.files?.[0];
     if (!file) return;
     if (!['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(file.type)) {
-      setUploadError('Only PDF, JPEG, PNG, or WebP files are accepted as Izin evidence.');
+      setUploadError('Only PDF, JPEG, PNG, or WebP files are accepted as leave evidence.');
       return;
     }
     if (file.size === 0 || file.size > 10 * 1024 * 1024) {
@@ -431,13 +431,13 @@ export const DemoAttendancePage: React.FC = () => {
             {/* Header — zero user-facing synthetic clock widget */}
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <h1 className="text-[24px] leading-[30px] font-bold text-[#1B2A4A]">
+                <h1 className="vonta-page-title text-[#1B2A4A]">
                   Attendance management
                 </h1>
                 <p className="mt-1 text-[14px] text-[#4F5C67]">
                   Schedule timezone: <strong>{state.project.timezone}</strong> (08:00 shift start ·
-                  09:00 automatic <strong>Alfa</strong> cutoff). <strong>Izin</strong> requires
-                  private PDF or photo evidence approved by an assigned Foreman.
+                  09:00 automatic <strong>Absent</strong> cutoff). <strong>Approved leave</strong>{' '}
+                  requires private PDF or photo evidence reviewed by an assigned Foreman.
                 </p>
               </div>
 
@@ -791,13 +791,14 @@ export const DemoAttendancePage: React.FC = () => {
                         Status ({selectedDate})
                       </th>
                       <th scope="col" className="px-4 py-3 text-right">
-                        Attendance %
+                        Attendance <span aria-hidden="true">%</span>
+                        <span className="sr-only">percentage</span>
                       </th>
                       <th scope="col" className="px-4 py-3 text-right">
-                        Approved Izin
+                        Approved leave
                       </th>
                       <th scope="col" className="px-4 py-3 text-right">
-                        Alfa
+                        Absent
                       </th>
                       <th scope="col" className="px-4 py-3">
                         Leave evidence &amp; actions
@@ -853,13 +854,11 @@ export const DemoAttendancePage: React.FC = () => {
                                   row.dayDerived.attendanceStatus
                                 )}`}
                               >
-                                {row.dayDerived.attendanceStatus === 'no_record_yet'
-                                  ? 'Awaiting check-in'
-                                  : formatAttendanceStatusLabel(row.dayDerived.attendanceStatus)}
+                                {formatAttendanceStatusLabel(row.dayDerived.attendanceStatus)}
                               </span>
                               {row.dayIzin && (
                                 <div className="text-[11px] text-[#4F5C67]">
-                                  Izin: {formatIzinRequestStatusLabel(row.dayIzin.status)}
+                                  {formatIzinRequestStatusLabel(row.dayIzin.status)}
                                 </div>
                               )}
                             </div>
@@ -932,7 +931,7 @@ export const DemoAttendancePage: React.FC = () => {
                                       }))
                                     }
                                     placeholder="Rejection reason…"
-                                    aria-label="Izin rejection reason"
+                                    aria-label="Leave rejection reason"
                                     className="w-36 rounded border border-[#D9DEE2] px-2 py-1 text-[12px]"
                                   />
                                   <button
@@ -967,7 +966,7 @@ export const DemoAttendancePage: React.FC = () => {
                                   className="inline-flex items-center gap-1 rounded border border-[#D9DEE2] bg-white px-2 py-1 text-[12px] font-medium text-[#1B2A4A] hover:bg-[#F4F3EF]"
                                 >
                                   <FileCheck2 className="h-3.5 w-3.5" aria-hidden="true" />
-                                  Submit Izin
+                                  Request leave
                                 </button>
                               )}
 
@@ -1029,12 +1028,12 @@ export const DemoAttendancePage: React.FC = () => {
         </main>
       </div>
 
-      {/* Submit Izin Modal (PDF + Image support) */}
+      {/* Submit Leave Request Modal (PDF + Image support) */}
       {izinModalShiftId && (
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="Submit Izin with supporting document"
+          aria-label="Submit leave request with supporting document"
           className="fixed inset-0 z-50 flex items-center justify-center bg-[#111B2E]/60 p-4"
         >
           <form
@@ -1043,12 +1042,12 @@ export const DemoAttendancePage: React.FC = () => {
           >
             <div className="flex items-center justify-between">
               <h2 className="text-[16px] font-semibold text-[#1B2A4A]">
-                Submit Izin Request (PDF or Photo)
+                Submit leave request (PDF or photo)
               </h2>
               <button
                 type="button"
                 onClick={() => setIzinModalShiftId(null)}
-                aria-label="Close Izin modal"
+                aria-label="Close leave request modal"
                 className="rounded p-1 text-[#4F5C67] hover:bg-[#F4F3EF]"
               >
                 <X className="h-4 w-4" aria-hidden="true" />
@@ -1103,7 +1102,7 @@ export const DemoAttendancePage: React.FC = () => {
                 type="submit"
                 className="rounded-lg bg-[#1B2A4A] px-4 py-2 text-[13px] font-semibold text-white hover:bg-[#1B2A4A]/90"
               >
-                Submit Izin
+                Submit leave request
               </button>
             </div>
           </form>
@@ -1150,7 +1149,7 @@ export const DemoAttendancePage: React.FC = () => {
                 className="mt-1 w-full rounded-lg border border-[#D9DEE2] bg-white px-3 py-2 text-[13px]"
               >
                 <option value="present">Present (with validated daily evidence)</option>
-                <option value="alfa">Alfa (justified correction)</option>
+                <option value="alfa">Absent (justified correction)</option>
               </select>
             </div>
             <div>
@@ -1215,7 +1214,7 @@ export const DemoAttendancePage: React.FC = () => {
                   {viewedEvidence.fileName}
                 </h3>
                 <p className="text-[11px] text-[#4F5C67]">
-                  Private Izin evidence · Restricted to worker and assigned Foreman
+                  Private leave evidence · Restricted to worker and assigned Foreman
                 </p>
               </div>
               <button
@@ -1287,13 +1286,13 @@ export const PrivateAttendancePage: React.FC = () => {
           <div className="mx-auto w-full max-w-[1360px] space-y-5">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <h1 className="text-[24px] leading-[30px] font-bold text-[#1B2A4A]">
+                <h1 className="vonta-page-title text-[#1B2A4A]">
                   Attendance management
                 </h1>
                 <p className="mt-1 text-[14px] text-[#4F5C67]">
-                  Schedule timezone: <strong>{project?.timezone ?? 'Asia/Makassar'}</strong>. Alfa
-                  is recorded automatically 1 hour after shift start; Izin supports private PDF and
-                  photo evidence reviewed by an assigned Foreman.
+                  Schedule timezone: <strong>{project?.timezone ?? 'Asia/Makassar'}</strong>. Absent
+                  is recorded automatically 60 minutes after shift start; Approved leave supports
+                  private PDF and photo evidence reviewed by an assigned Foreman.
                 </p>
               </div>
               <div className="inline-flex rounded-xl border border-[#D9DEE2] bg-white p-1">

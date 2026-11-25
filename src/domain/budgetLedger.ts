@@ -92,6 +92,9 @@ export function formatCompactCurrency(amount: number, currency = 'IDR'): string 
   const sign = amount < 0 ? '-' : '';
   const abs = Math.abs(amount);
   const prefix = currency === 'IDR' ? 'Rp ' : `${currency} `;
+  if (abs >= 1_000_000_000_000) {
+    return `${sign}${prefix}${(abs / 1_000_000_000_000).toFixed(1)}T`;
+  }
   if (abs >= 1_000_000_000) {
     return `${sign}${prefix}${(abs / 1_000_000_000).toFixed(1)}B`;
   }
@@ -102,6 +105,46 @@ export function formatCompactCurrency(amount: number, currency = 'IDR'): string 
     return `${sign}${prefix}${Math.round(abs / 1_000)}k`;
   }
   return `${sign}${prefix}${Math.round(abs)}`;
+}
+
+export interface BudgetUsageSeriesPoint {
+  allocatedValue: number;
+  usedValue: number;
+  hasPositiveAllocation: boolean;
+}
+
+/**
+ * Computes Y-axis values for the full-width Budget Usage Comparison chart.
+ * - Amount mode: raw allocated (0 when missing) and posted used amounts.
+ * - Percent mode: for a positive allocation (> 0), scales allocated to 100% and
+ *   posted use to that department's allocation ratio (`actualUsedPercent`);
+ *   missing or zero allocations plot at 0 so they are never misrepresented as 100%.
+ */
+export function computeBudgetUsageSeriesPoint(
+  summary: Pick<DepartmentBudgetComputed, 'allocatedAmount' | 'postedUsedAmount' | 'actualUsedPercent'>,
+  mode: 'amount' | 'percent'
+): BudgetUsageSeriesPoint {
+  const hasPositiveAllocation =
+    summary.allocatedAmount !== null && summary.allocatedAmount > 0;
+  if (mode === 'percent') {
+    if (!hasPositiveAllocation) {
+      return {
+        allocatedValue: 0,
+        usedValue: 0,
+        hasPositiveAllocation: false,
+      };
+    }
+    return {
+      allocatedValue: 100,
+      usedValue: Math.max(0, summary.actualUsedPercent ?? 0),
+      hasPositiveAllocation: true,
+    };
+  }
+  return {
+    allocatedValue: summary.allocatedAmount ?? 0,
+    usedValue: Math.max(0, summary.postedUsedAmount),
+    hasPositiveAllocation,
+  };
 }
 
 /**

@@ -281,7 +281,7 @@ export function canDecideIzinForShift(options: {
     return {
       allowed: false,
       code: 'FORBIDDEN_INACTIVE',
-      reason: 'Active project membership is required to review izin requests.',
+      reason: 'Active project membership is required to review leave requests.',
     };
   }
 
@@ -289,7 +289,7 @@ export function canDecideIzinForShift(options: {
     return {
       allowed: false,
       code: 'SELF_REVIEW_FORBIDDEN',
-      reason: 'You cannot approve or reject your own izin request.',
+      reason: 'You cannot approve or reject your own leave request.',
     };
   }
 
@@ -297,7 +297,7 @@ export function canDecideIzinForShift(options: {
     return {
       allowed: false,
       code: 'MANDOR_REQUIRED',
-      reason: 'Only an eligible assigned Mandor can decide izin requests.',
+      reason: 'Only an eligible assigned Foreman can decide leave requests.',
     };
   }
 
@@ -570,7 +570,7 @@ export function evaluateCheckInAttempt(options: {
     return {
       accepted: false,
       code: 'APPROVED_IZIN_CONFLICT',
-      message: 'An approved Izin already applies to this shift. Use the correction workflow.',
+      message: 'Approved leave already applies to this shift. Use the correction workflow.',
     };
   }
 
@@ -588,7 +588,7 @@ export function evaluateCheckInAttempt(options: {
     return {
       accepted: false,
       code: 'PAST_CUTOFF',
-      message: `Check-in window closed at ${formatInstantInProjectZone(cutoffUtcMs, shift.timezone)}. Attendance is marked Alfa; submit an Izin request with photo evidence if excused.`,
+      message: `Check-in window closed at ${formatInstantInProjectZone(cutoffUtcMs, shift.timezone)}. Attendance is marked Absent; submit a leave request with private evidence if excused.`,
     };
   }
 
@@ -777,13 +777,13 @@ export function computeDepartmentPinDashboard(
 export function formatAttendanceStatusLabel(status: EffectiveAttendanceStatus): string {
   switch (status) {
     case 'no_record_yet':
-      return 'No record yet';
+      return 'Pending check-in';
     case 'present':
       return 'Present';
     case 'alfa':
-      return 'Alfa';
+      return 'Absent';
     case 'izin':
-      return 'Izin';
+      return 'Approved leave';
     case 'schedule_unavailable':
       return 'Schedule unavailable';
     case 'not_scheduled':
@@ -796,13 +796,13 @@ export function formatIzinRequestStatusLabel(status: IzinRequestStatus): string 
     case 'none':
       return 'No request';
     case 'pending':
-      return 'Awaiting Foreman review';
+      return 'Leave request pending';
     case 'approved':
-      return 'Approved';
+      return 'Approved leave';
     case 'rejected':
-      return 'Rejected';
+      return 'Leave request rejected';
     case 'awaiting_mandor_assignment':
-      return 'Awaiting Foreman assignment';
+      return 'Leave request pending';
     case 'conflict_requires_correction':
       return 'Needs correction workflow';
   }

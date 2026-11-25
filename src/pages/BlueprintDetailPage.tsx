@@ -220,7 +220,7 @@ export function BlueprintDetailPage({ mode }: BlueprintDetailPageProps) {
             {!sheet ? (
               <section className="rounded-xl border border-[#D9DEE2] bg-white p-8 text-center">
                 <FileWarning className="mx-auto h-8 w-8 text-[#A64011]" aria-hidden="true" />
-                <h1 className="mt-3 text-[20px] font-bold text-[#1B2A4A]">Drawing not found</h1>
+                <h1 className="vonta-page-title mt-3 text-[#1B2A4A]">Drawing not found</h1>
                 <p className="mt-1 text-[14px] text-[#4F5C67]">
                   The requested blueprint revision is not in this project&apos;s register.
                 </p>
@@ -245,7 +245,7 @@ export function BlueprintDetailPage({ mode }: BlueprintDetailPageProps) {
                       <div className="flex flex-wrap items-center gap-2">
                         <h1
                           data-testid="blueprint-detail-title"
-                          className="text-[18px] leading-[24px] font-bold text-[#1B2A4A]"
+                          className="vonta-page-title text-[#1B2A4A]"
                         >
                           {sheet.sheetCode} · {sheet.title}
                         </h1>

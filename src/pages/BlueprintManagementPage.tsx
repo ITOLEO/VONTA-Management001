@@ -279,7 +279,7 @@ export function BlueprintManagementPage({ mode }: BlueprintManagementPageProps) 
             {/* Header */}
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
-                <h1 className="text-[24px] leading-[30px] font-bold text-[#1B2A4A]">
+                <h1 className="vonta-page-title text-[#1B2A4A]">
                   Blueprint management
                 </h1>
                 <p className="mt-1 text-[14px] text-[#4F5C67]">

@@ -30,8 +30,15 @@ import {
 } from '../utils/privateDrawingStore';
 import {
   computeCompassOrientation,
+  DEFAULT_ANNOTATION_SCREEN_TOLERANCE_PX,
   formatPhysicalDistanceMm,
+  isPointOccludedByWall,
+  pointToRectDistance2D,
+  pointToSegmentDistance2D,
+  resolveFrontmostAnnotationHit,
   strokeWidthPxToWorldMeters,
+  type AnnotationPickCandidate,
+  type AnnotationPickPieceKind,
   type DrawingLineStyle,
 } from '../domain/workspaceMath';
 
@@ -75,6 +82,7 @@ interface SpatialViewport3DProps {
   onMeshCrossCheckMeasured?: (measurement: CrossCheckMeasurement) => void;
   // Private device-local 3D drawings & tools
   annotations?: PrivateSurfaceAnnotation[];
+  selectedAnnotationId?: string | null;
   activeDrawingTool?: DrawingToolType;
   drawingColorHex?: string;
   drawingStrokeWidth?: DrawingStrokeWidthKey;
@@ -84,6 +92,7 @@ interface SpatialViewport3DProps {
   hideLocalDrawings?: boolean;
   canDraw?: boolean;
   isModelCalibrated?: boolean;
+  onSelectAnnotation?: (annotationId: string | null) => void;
   onCreateAnnotation?: (draft: PrivateAnnotationDraft) => void;
   onDeleteAnnotation?: (annotationId: string) => void;
   onDrawingRejected?: (reason: string) => void;
@@ -362,7 +371,15 @@ function splitPolyline2DByStyle(
 
 function createTextLabelSprite(
   text: string,
-  options?: { bg?: string; fg?: string; border?: string; scaleX?: number; scaleY?: number }
+  options?: {
+    bg?: string;
+    fg?: string;
+    border?: string;
+    scaleX?: number;
+    scaleY?: number;
+    depthTest?: boolean;
+    selected?: boolean;
+  }
 ): THREE.Sprite {
   const canvas = document.createElement('canvas');
   canvas.width = 512;
@@ -374,25 +391,41 @@ function createTextLabelSprite(
   const fg = options?.fg ?? '#FFFFFF';
   const border = options?.border ?? '#D4652F';
 
+  if (options?.selected) {
+    ctx.strokeStyle = 'rgba(16, 185, 129, 0.55)';
+    ctx.lineWidth = 12;
+    ctx.beginPath();
+    ctx.roundRect(8, 12, canvas.width - 16, canvas.height - 24, 22);
+    ctx.stroke();
+  }
+
   ctx.fillStyle = bg;
   ctx.beginPath();
   ctx.roundRect(12, 16, canvas.width - 24, canvas.height - 32, 18);
   ctx.fill();
   ctx.strokeStyle = border;
-  ctx.lineWidth = 4;
+  ctx.lineWidth = options?.selected ? 6 : 4;
   ctx.stroke();
 
   ctx.fillStyle = fg;
-  ctx.font = '700 34px Inter, system-ui, sans-serif';
+  ctx.font = '700 36px Inter, system-ui, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 1);
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
-  const mat = new THREE.SpriteMaterial({ map: tex, depthTest: false, transparent: true });
+  const mat = new THREE.SpriteMaterial({
+    map: tex,
+    depthTest: options?.depthTest ?? false,
+    depthWrite: false,
+    transparent: true,
+  });
   const sprite = new THREE.Sprite(mat);
   sprite.scale.set(options?.scaleX ?? 1.28, options?.scaleY ?? 0.28, 1);
+  if (options?.depthTest) {
+    sprite.renderOrder = 4;
+  }
   return sprite;
 }
 
@@ -721,11 +754,22 @@ function buildSurfaceRibbonGeometry(
   return geo;
 }
 
+interface AnnotationPickMeta {
+  annotationId: string;
+  kind: AnnotationPickPieceKind;
+  worldPolylines: THREE.Vector3[][];
+  labelWorldPos: THREE.Vector3 | null;
+  labelScaleX: number;
+  labelScaleY: number;
+  anchorWorldPos: THREE.Vector3;
+}
+
 function createWallFillOverlayGroup(
   elementId: string,
   colorHex: string,
   selectableMeshes: THREE.Mesh[],
-  annotationId: string | null
+  annotationId: string | null,
+  isSelected = false
 ): THREE.Group {
   const group = new THREE.Group();
   const targetMeshes = selectableMeshes.filter((m) => m.userData.elementId === elementId);
@@ -734,7 +778,7 @@ function createWallFillOverlayGroup(
   const fillMat = new THREE.MeshStandardMaterial({
     color: new THREE.Color(colorHex || '#D4652F'),
     transparent: true,
-    opacity: 0.52,
+    opacity: isSelected ? 0.64 : 0.52,
     roughness: 0.72,
     metalness: 0.02,
     polygonOffset: true,
@@ -743,14 +787,20 @@ function createWallFillOverlayGroup(
     depthWrite: false,
   });
 
+  const selectionEdgeMat = isSelected
+    ? new THREE.LineBasicMaterial({ color: 0x10b981, depthTest: true })
+    : null;
+
   const boxTmp = new THREE.Box3();
   const size = new THREE.Vector3();
   const center = new THREE.Vector3();
+  const anchorSum = new THREE.Vector3();
 
   for (const srcMesh of targetMeshes) {
     boxTmp.setFromObject(srcMesh);
     boxTmp.getSize(size);
     boxTmp.getCenter(center);
+    anchorSum.add(center);
     // Slightly inflate overlay so it tints ONLY this wall cleanly without z-fighting or modifying shared elementMaterials
     const geo = new THREE.BoxGeometry(size.x + 0.014, size.y + 0.014, size.z + 0.014);
     const overlay = new THREE.Mesh(geo, fillMat);
@@ -758,12 +808,30 @@ function createWallFillOverlayGroup(
     if (annotationId) {
       overlay.userData.annotationId = annotationId;
       overlay.userData.isAnnotationHitTarget = true;
+      overlay.userData.annotationHitKind = 'wall_fill';
+    }
+    if (selectionEdgeMat) {
+      const edges = new THREE.EdgesGeometry(geo);
+      const wire = new THREE.LineSegments(edges, selectionEdgeMat);
+      wire.scale.set(1.004, 1.004, 1.004);
+      overlay.add(wire);
     }
     group.add(overlay);
   }
 
   if (annotationId) {
     group.userData.annotationId = annotationId;
+    const anchorCenter = anchorSum.multiplyScalar(1 / targetMeshes.length);
+    const pickMeta: AnnotationPickMeta = {
+      annotationId,
+      kind: 'wall_fill',
+      worldPolylines: [],
+      labelWorldPos: null,
+      labelScaleX: 0,
+      labelScaleY: 0,
+      anchorWorldPos: anchorCenter,
+    };
+    group.userData.pickMeta = pickMeta;
   }
   return group;
 }
@@ -786,14 +854,16 @@ function createAnnotationRenderGroup(
   >,
   annotationId: string | null,
   selectableMeshes: THREE.Mesh[],
-  isPreview = false
+  isPreview = false,
+  isSelected = false
 ): THREE.Group {
   if (annotation.tool === 'wall_fill') {
     return createWallFillOverlayGroup(
       annotation.elementId,
       annotation.colorHex,
       selectableMeshes,
-      annotationId
+      annotationId,
+      isSelected
     );
   }
 
@@ -847,6 +917,38 @@ function createAnnotationRenderGroup(
     side: THREE.DoubleSide,
   });
 
+  // Visible selection halo behind selected stroke/shape/ruler line
+  if (isSelected && !isPreview) {
+    const haloMat = new THREE.MeshBasicMaterial({
+      color: 0x10b981,
+      side: THREE.DoubleSide,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    });
+    for (const poly of rawPolylines) {
+      const haloGeo = buildSurfaceRibbonGeometry(
+        poly,
+        origin,
+        normal,
+        tangentU,
+        tangentV,
+        halfWidth + 0.028,
+        surfaceLift - 0.0015
+      );
+      if (haloGeo) {
+        const haloMesh = new THREE.Mesh(haloGeo, haloMat);
+        haloMesh.renderOrder = 2;
+        if (annotationId) {
+          haloMesh.userData.annotationId = annotationId;
+          haloMesh.userData.isAnnotationHitTarget = true;
+          haloMesh.userData.annotationHitKind = 'stroke';
+        }
+        group.add(haloMesh);
+      }
+    }
+  }
+
   for (const poly of styledPolylines) {
     const geo = buildSurfaceRibbonGeometry(
       poly,
@@ -859,14 +961,31 @@ function createAnnotationRenderGroup(
     );
     if (geo) {
       const mesh = new THREE.Mesh(geo, mat);
-      if (annotationId) mesh.userData.annotationId = annotationId;
+      mesh.renderOrder = 3;
+      if (annotationId) {
+        mesh.userData.annotationId = annotationId;
+        mesh.userData.isAnnotationHitTarget = true;
+        mesh.userData.annotationHitKind = 'stroke';
+      }
       group.add(mesh);
     }
   }
 
-  // Use raw polylines for generous eraser hit testing even on dashed/dotted strokes
-  if (annotationId && !isPreview) {
-    for (const poly of rawPolylines) {
+  // Register wider invisible hit ribbons for dashed/dotted/thin strokes and build world polylines for screen-space picking
+  const worldPolylines: THREE.Vector3[][] = [];
+  for (const poly of rawPolylines) {
+    const chain = poly.map((p) =>
+      origin
+        .clone()
+        .addScaledVector(tangentU, p.u)
+        .addScaledVector(tangentV, p.v)
+        .addScaledVector(normal, surfaceLift)
+    );
+    if (chain.length >= 2) {
+      worldPolylines.push(chain);
+    }
+
+    if (annotationId && !isPreview) {
       const hitGeo = buildSurfaceRibbonGeometry(
         poly,
         origin,
@@ -880,36 +999,64 @@ function createAnnotationRenderGroup(
         const hitMesh = new THREE.Mesh(hitGeo, hitMat);
         hitMesh.userData.annotationId = annotationId;
         hitMesh.userData.isAnnotationHitTarget = true;
+        hitMesh.userData.annotationHitKind = 'stroke';
         group.add(hitMesh);
       }
     }
   }
 
-  // Ruler measurement readout sprite (inside privateDrawingGroup so clean PNG excludes it)
+  // Ruler measurement readout sprite (depth-tested against walls & registered in annotationHitTargets)
+  let labelWorldPos: THREE.Vector3 | null = null;
+  let labelScaleX = 0;
+  let labelScaleY = 0;
   if (annotation.measurementLabel && annotation.points2D.length >= 2) {
     const a = annotation.points2D[0];
     const b = annotation.points2D[annotation.points2D.length - 1];
     const midU = (a.u + b.u) / 2;
     const midV = (a.v + b.v) / 2;
-    const labelPos = origin
+    labelScaleX = isSelected ? 0.92 : 0.86;
+    labelScaleY = isSelected ? 0.22 : 0.2;
+    const labelNormalClearance = Math.max(0.24, labelScaleX * 0.52);
+    labelWorldPos = origin
       .clone()
       .addScaledVector(tangentU, midU)
       .addScaledVector(tangentV, midV)
-      .addScaledVector(normal, surfaceLift + 0.16);
+      .addScaledVector(normal, surfaceLift + labelNormalClearance);
     const sprite = createTextLabelSprite(annotation.measurementLabel, {
-      bg: 'rgba(27, 42, 74, 0.94)',
+      bg: isSelected ? 'rgba(6, 78, 59, 0.96)' : 'rgba(27, 42, 74, 0.94)',
       fg: '#FFFFFF',
-      border: annotation.colorHex || '#D4652F',
-      scaleX: 1.35,
-      scaleY: 0.3,
+      border: isSelected ? '#10B981' : annotation.colorHex || '#D4652F',
+      scaleX: labelScaleX,
+      scaleY: labelScaleY,
+      depthTest: true,
+      selected: isSelected,
     });
-    sprite.position.copy(labelPos);
-    if (annotationId) sprite.userData.annotationId = annotationId;
+    sprite.position.copy(labelWorldPos);
+    if (annotationId) {
+      sprite.userData.annotationId = annotationId;
+      sprite.userData.isAnnotationHitTarget = true;
+      sprite.userData.annotationHitKind = 'label';
+    }
     group.add(sprite);
   }
 
   if (annotationId) {
     group.userData.annotationId = annotationId;
+    const primaryChain = worldPolylines[0];
+    const anchorWorldPos =
+      primaryChain && primaryChain.length > 0
+        ? primaryChain[Math.floor(primaryChain.length / 2)].clone()
+        : origin.clone().addScaledVector(normal, surfaceLift);
+    const pickMeta: AnnotationPickMeta = {
+      annotationId,
+      kind: 'stroke',
+      worldPolylines,
+      labelWorldPos,
+      labelScaleX,
+      labelScaleY,
+      anchorWorldPos,
+    };
+    group.userData.pickMeta = pickMeta;
   }
   return group;
 }
@@ -933,6 +1080,7 @@ export const SpatialViewport3D = forwardRef<SpatialViewportHandle, SpatialViewpo
       onCreateVoidClick,
       onMeshCrossCheckMeasured,
       annotations = [],
+      selectedAnnotationId = null,
       activeDrawingTool = 'cursor',
       drawingColorHex = '#E11D48',
       drawingStrokeWidth = 'medium',
@@ -942,6 +1090,7 @@ export const SpatialViewport3D = forwardRef<SpatialViewportHandle, SpatialViewpo
       hideLocalDrawings = false,
       canDraw = false,
       isModelCalibrated = true,
+      onSelectAnnotation,
       onCreateAnnotation,
       onDeleteAnnotation,
       onDrawingRejected,
@@ -966,6 +1115,7 @@ export const SpatialViewport3D = forwardRef<SpatialViewportHandle, SpatialViewpo
     onCreateSurfaceHit,
     onCreateVoidClick,
     onMeshCrossCheckMeasured,
+    onSelectAnnotation,
     onCreateAnnotation,
     onDeleteAnnotation,
     onDrawingRejected,
@@ -978,6 +1128,7 @@ export const SpatialViewport3D = forwardRef<SpatialViewportHandle, SpatialViewpo
     onCreateSurfaceHit,
     onCreateVoidClick,
     onMeshCrossCheckMeasured,
+    onSelectAnnotation,
     onCreateAnnotation,
     onDeleteAnnotation,
     onDrawingRejected,
@@ -993,6 +1144,7 @@ export const SpatialViewport3D = forwardRef<SpatialViewportHandle, SpatialViewpo
     layers,
     selectedElementId,
     selectedPinId,
+    selectedAnnotationId: effectiveCanDraw ? selectedAnnotationId : null,
     activeRoomId,
     pins,
     pendingHit,
@@ -1015,6 +1167,7 @@ export const SpatialViewport3D = forwardRef<SpatialViewportHandle, SpatialViewpo
     layers,
     selectedElementId,
     selectedPinId,
+    selectedAnnotationId: effectiveCanDraw ? selectedAnnotationId : null,
     activeRoomId,
     pins,
     pendingHit,
@@ -1049,6 +1202,7 @@ export const SpatialViewport3D = forwardRef<SpatialViewportHandle, SpatialViewpo
     selectableMeshes: THREE.Mesh[];
     pinHitTargets: THREE.Object3D[];
     annotationHitTargets: THREE.Object3D[];
+    annotationPickMetas: AnnotationPickMeta[];
     elementMaterials: Map<string, THREE.MeshStandardMaterial>;
     overallPos: THREE.Vector3;
     overallTarget: THREE.Vector3;
@@ -1067,7 +1221,7 @@ export const SpatialViewport3D = forwardRef<SpatialViewportHandle, SpatialViewpo
     while (ctx.privateDrawingGroup.children.length > 0) {
       const child = ctx.privateDrawingGroup.children[0];
       child.traverse((obj) => {
-        if (obj instanceof THREE.Mesh) {
+        if (obj instanceof THREE.Mesh || obj instanceof THREE.LineSegments) {
           obj.geometry.dispose();
           if (Array.isArray(obj.material)) obj.material.forEach((m) => m.dispose());
           else obj.material.dispose();
@@ -1080,13 +1234,30 @@ export const SpatialViewport3D = forwardRef<SpatialViewportHandle, SpatialViewpo
     }
 
     ctx.annotationHitTargets.length = 0;
+    ctx.annotationPickMetas.length = 0;
 
     if (!stateRef.current.readOnlyViewer) {
+      const selectedId = stateRef.current.selectedAnnotationId;
       for (const ann of stateRef.current.annotations) {
-        const grp = createAnnotationRenderGroup(ann, ann.id, ctx.selectableMeshes, false);
+        const isSelected = Boolean(selectedId && ann.id === selectedId);
+        const grp = createAnnotationRenderGroup(
+          ann,
+          ann.id,
+          ctx.selectableMeshes,
+          false,
+          isSelected
+        );
         ctx.privateDrawingGroup.add(grp);
+        const pickMeta = grp.userData.pickMeta as AnnotationPickMeta | undefined;
+        if (pickMeta) {
+          ctx.annotationPickMetas.push(pickMeta);
+        }
         grp.traverse((obj) => {
-          if (obj instanceof THREE.Mesh && obj.userData.isAnnotationHitTarget) {
+          if (
+            (obj instanceof THREE.Mesh || obj instanceof THREE.Sprite) &&
+            obj.userData.isAnnotationHitTarget &&
+            obj.userData.annotationId
+          ) {
             ctx.annotationHitTargets.push(obj);
           }
         });
@@ -1095,6 +1266,7 @@ export const SpatialViewport3D = forwardRef<SpatialViewportHandle, SpatialViewpo
 
     ctx.privateDrawingGroup.visible =
       !stateRef.current.readOnlyViewer && !stateRef.current.hideLocalDrawings;
+    ctx.syncCameraDataset();
     ctx.requestRender();
   }, []);
 
@@ -1733,22 +1905,53 @@ export const SpatialViewport3D = forwardRef<SpatialViewportHandle, SpatialViewpo
       }
 
       const rect = renderer.domElement.getBoundingClientRect();
-      if (rect.width > 0 && rect.height > 0 && pinGroup.children.length > 0) {
-        const coords: Record<string, { x: number; y: number }> = {};
-        const worldPos = new THREE.Vector3();
+      if (rect.width > 0 && rect.height > 0) {
         camera.updateMatrixWorld();
-        for (const child of pinGroup.children) {
-          const pid = child.userData?.pinId as string | undefined;
-          if (!pid) continue;
-          const hitMesh = child.children.find((c) => c.userData?.isPinHitTarget) ?? child;
-          hitMesh.getWorldPosition(worldPos);
-          worldPos.project(camera);
-          coords[pid] = {
-            x: Math.round(rect.left + ((worldPos.x + 1) / 2) * rect.width),
-            y: Math.round(rect.top + ((-worldPos.y + 1) / 2) * rect.height),
-          };
+        if (pinGroup.children.length > 0) {
+          const coords: Record<string, { x: number; y: number }> = {};
+          const worldPos = new THREE.Vector3();
+          for (const child of pinGroup.children) {
+            const pid = child.userData?.pinId as string | undefined;
+            if (!pid) continue;
+            const hitMesh = child.children.find((c) => c.userData?.isPinHitTarget) ?? child;
+            hitMesh.getWorldPosition(worldPos);
+            worldPos.project(camera);
+            coords[pid] = {
+              x: Math.round(rect.left + ((worldPos.x + 1) / 2) * rect.width),
+              y: Math.round(rect.top + ((-worldPos.y + 1) / 2) * rect.height),
+            };
+          }
+          el.dataset.pinScreen = JSON.stringify(coords);
         }
-        el.dataset.pinScreen = JSON.stringify(coords);
+
+        const metas = threeRef.current?.annotationPickMetas ?? [];
+        if (metas.length > 0 && privateDrawingGroup.visible) {
+          const annCoords: Record<
+            string,
+            { stroke: { x: number; y: number }; label?: { x: number; y: number } }
+          > = {};
+          const proj = new THREE.Vector3();
+          for (const meta of metas) {
+            proj.copy(meta.anchorWorldPos).project(camera);
+            const entry: { stroke: { x: number; y: number }; label?: { x: number; y: number } } = {
+              stroke: {
+                x: Math.round(rect.left + ((proj.x + 1) / 2) * rect.width),
+                y: Math.round(rect.top + ((-proj.y + 1) / 2) * rect.height),
+              },
+            };
+            if (meta.labelWorldPos) {
+              proj.copy(meta.labelWorldPos).project(camera);
+              entry.label = {
+                x: Math.round(rect.left + ((proj.x + 1) / 2) * rect.width),
+                y: Math.round(rect.top + ((-proj.y + 1) / 2) * rect.height),
+              };
+            }
+            annCoords[meta.annotationId] = entry;
+          }
+          el.dataset.annotationScreen = JSON.stringify(annCoords);
+        } else {
+          el.dataset.annotationScreen = '{}';
+        }
       }
     };
 
@@ -2153,22 +2356,139 @@ export const SpatialViewport3D = forwardRef<SpatialViewportHandle, SpatialViewpo
         return;
       }
 
-      // Eraser / Delete mode: click any own mark or wall fill to remove it
-      if (
-        cur.canDraw &&
-        cur.drawingDeleteMode &&
-        !cur.hideLocalDrawings &&
-        threeRef.current &&
-        threeRef.current.annotationHitTargets.length > 0
-      ) {
-        const annHits = raycaster.intersectObjects(threeRef.current.annotationHitTargets, false);
-        if (annHits.length > 0) {
-          const annId = String(annHits[0].object.userData.annotationId ?? '');
-          if (annId) {
-            callbacksRef.current.onDeleteAnnotation?.(annId);
-            return;
+      // Occlusion-safe frontmost annotation picker across zoom levels (covers strokes, shapes, wall fills & ruler labels)
+      const pickVisibleAnnotation = (ev: PointerEvent): AnnotationPickCandidate | null => {
+        const ctx = threeRef.current;
+        if (!ctx || !cur.canDraw || cur.hideLocalDrawings || cur.readOnlyViewer) return null;
+        if (ctx.annotationHitTargets.length === 0 && ctx.annotationPickMetas.length === 0) {
+          return null;
+        }
+
+        const rect = renderer.domElement.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return null;
+
+        const buildingHits = cur.layers.civil
+          ? raycaster.intersectObjects(selectableMeshes, false)
+          : [];
+        const nearestWallDist = buildingHits.length > 0 ? buildingHits[0].distance : null;
+
+        const candidates: AnnotationPickCandidate[] = [];
+
+        // 1. Direct Three.js raycast hits (includes meshes, hit ribbons, wall fills, AND ruler label sprites)
+        const directHits = raycaster.intersectObjects(ctx.annotationHitTargets, false);
+        for (const hit of directHits) {
+          const annotationId = String(hit.object.userData.annotationId ?? '');
+          if (!annotationId) continue;
+          const kind = (hit.object.userData.annotationHitKind ??
+            'stroke') as AnnotationPickPieceKind;
+          const occludedByWall = isPointOccludedByWall(hit.distance, nearestWallDist);
+          candidates.push({
+            annotationId,
+            distance: hit.distance,
+            screenDistancePx: 0,
+            kind,
+            occludedByWall,
+          });
+        }
+
+        // 2. Screen-space tolerance fallback across zoom levels (strokes & ruler labels) with wall-occlusion ray test
+        const clickX = ev.clientX - rect.left;
+        const clickY = ev.clientY - rect.top;
+        const occRaycaster = new THREE.Raycaster();
+        const occDir = new THREE.Vector3();
+        const projA = new THREE.Vector3();
+        const projB = new THREE.Vector3();
+        const interpPt = new THREE.Vector3();
+        const halfFovTan = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
+
+        const isWorldPointOccluded = (pt: THREE.Vector3): { occluded: boolean; dist: number } => {
+          occDir.subVectors(pt, camera.position);
+          const dist = occDir.length();
+          if (dist < 1e-4) return { occluded: true, dist: 0 };
+          if (!cur.layers.civil) return { occluded: false, dist };
+          occDir.divideScalar(dist);
+          occRaycaster.set(camera.position, occDir);
+          occRaycaster.far = dist + 0.05;
+          const wallHits = occRaycaster.intersectObjects(selectableMeshes, false);
+          const wallDist = wallHits.length > 0 ? wallHits[0].distance : null;
+          return { occluded: isPointOccludedByWall(dist, wallDist), dist };
+        };
+
+        for (const meta of ctx.annotationPickMetas) {
+          if (meta.labelWorldPos) {
+            projA.copy(meta.labelWorldPos).project(camera);
+            if (projA.z >= -1 && projA.z <= 1) {
+              const cx = ((projA.x + 1) / 2) * rect.width;
+              const cy = ((-projA.y + 1) / 2) * rect.height;
+              const camDist = camera.position.distanceTo(meta.labelWorldPos);
+              if (camDist > 0.05) {
+                const pxPerMeter = rect.height / (2 * halfFovTan * camDist);
+                const halfW = Math.max(18, (meta.labelScaleX * 0.5) * pxPerMeter);
+                const halfH = Math.max(10, (meta.labelScaleY * 0.5) * pxPerMeter);
+                const distPx = pointToRectDistance2D(
+                  clickX,
+                  clickY,
+                  cx - halfW,
+                  cy - halfH,
+                  cx + halfW,
+                  cy + halfH
+                );
+                if (distPx <= DEFAULT_ANNOTATION_SCREEN_TOLERANCE_PX) {
+                  const occ = isWorldPointOccluded(meta.labelWorldPos);
+                  candidates.push({
+                    annotationId: meta.annotationId,
+                    distance: occ.dist,
+                    screenDistancePx: distPx,
+                    kind: 'label',
+                    occludedByWall: occ.occluded,
+                  });
+                }
+              }
+            }
+          }
+
+          let bestSegDistPx = Infinity;
+          let bestSegPt: THREE.Vector3 | null = null;
+          for (const chain of meta.worldPolylines) {
+            for (let i = 0; i < chain.length - 1; i += 1) {
+              projA.copy(chain[i]).project(camera);
+              projB.copy(chain[i + 1]).project(camera);
+              if (projA.z < -1 || projA.z > 1 || projB.z < -1 || projB.z > 1) continue;
+              const ax = ((projA.x + 1) / 2) * rect.width;
+              const ay = ((-projA.y + 1) / 2) * rect.height;
+              const bx = ((projB.x + 1) / 2) * rect.width;
+              const by = ((-projB.y + 1) / 2) * rect.height;
+              const seg = pointToSegmentDistance2D(clickX, clickY, ax, ay, bx, by);
+              if (seg.distance < bestSegDistPx) {
+                bestSegDistPx = seg.distance;
+                interpPt.copy(chain[i]).lerp(chain[i + 1], seg.t);
+                bestSegPt = interpPt.clone();
+              }
+            }
+          }
+
+          if (bestSegPt && bestSegDistPx <= DEFAULT_ANNOTATION_SCREEN_TOLERANCE_PX) {
+            const occ = isWorldPointOccluded(bestSegPt);
+            candidates.push({
+              annotationId: meta.annotationId,
+              distance: occ.dist,
+              screenDistancePx: bestSegDistPx,
+              kind: 'stroke',
+              occludedByWall: occ.occluded,
+            });
           }
         }
+
+        return resolveFrontmostAnnotationHit(candidates, DEFAULT_ANNOTATION_SCREEN_TOLERANCE_PX);
+      };
+
+      // Eraser mode: remove only the clicked visible owned annotation; on a miss, protect walls and Pins!
+      if (cur.canDraw && cur.drawingDeleteMode && !cur.createMode) {
+        const hit = pickVisibleAnnotation(e);
+        if (hit) {
+          callbacksRef.current.onDeleteAnnotation?.(hit.annotationId);
+        }
+        return;
       }
 
       if (cur.createMode) {
@@ -2220,15 +2540,26 @@ export const SpatialViewport3D = forwardRef<SpatialViewportHandle, SpatialViewpo
         return;
       }
 
-      // Inspect mode: check Pin hit targets first
-      if (cur.layers.pins && threeRef.current && threeRef.current.pinHitTargets.length > 0) {
-        const pinHits = raycaster.intersectObjects(threeRef.current.pinHitTargets, false);
-        if (pinHits.length > 0) {
-          const pinId = String(pinHits[0].object.userData.pinId ?? '');
-          if (pinId) {
-            callbacksRef.current.onSelectPin(pinId);
-            return;
-          }
+      // Cursor mode: check Pins and visible owned private annotations, picking frontmost visible target
+      const pinHits =
+        cur.layers.pins && threeRef.current && threeRef.current.pinHitTargets.length > 0
+          ? raycaster.intersectObjects(threeRef.current.pinHitTargets, false)
+          : [];
+      const nearestPinHit = pinHits.length > 0 ? pinHits[0] : null;
+      const annotationHit = isCursorModeTool(cur.activeDrawingTool)
+        ? pickVisibleAnnotation(e)
+        : null;
+
+      if (annotationHit && (!nearestPinHit || annotationHit.distance <= nearestPinHit.distance + 0.08)) {
+        callbacksRef.current.onSelectAnnotation?.(annotationHit.annotationId);
+        return;
+      }
+
+      if (nearestPinHit) {
+        const pinId = String(nearestPinHit.object.userData.pinId ?? '');
+        if (pinId) {
+          callbacksRef.current.onSelectPin(pinId);
+          return;
         }
       }
 
@@ -2295,6 +2626,7 @@ export const SpatialViewport3D = forwardRef<SpatialViewportHandle, SpatialViewpo
       selectableMeshes,
       pinHitTargets: [],
       annotationHitTargets: [],
+      annotationPickMetas: [],
       elementMaterials,
       overallPos,
       overallTarget,
@@ -2367,10 +2699,10 @@ export const SpatialViewport3D = forwardRef<SpatialViewportHandle, SpatialViewpo
     updateElementHighlights();
   }, [selectedElementId, layers.civil, layers.pins, updateElementHighlights]);
 
-  // Synchronize private device-local drawings
+  // Synchronize private device-local drawings & selection highlight
   useEffect(() => {
     rebuildPrivateDrawings();
-  }, [annotations, hideLocalDrawings, readOnlyViewer, rebuildPrivateDrawings]);
+  }, [annotations, selectedAnnotationId, hideLocalDrawings, readOnlyViewer, rebuildPrivateDrawings]);
 
   // Synchronize Ground Compass visibility and north angle rotation
   useEffect(() => {
@@ -2512,6 +2844,8 @@ export const SpatialViewport3D = forwardRef<SpatialViewportHandle, SpatialViewpo
       data-create-mode={effectiveCreateMode ? 'true' : 'false'}
       data-drawing-tool={activeDrawingTool}
       data-local-annotation-count={String(annotations.length)}
+      data-local-annotation-ids={annotations.map((a) => a.id).join(',')}
+      data-selected-annotation={effectiveCanDraw ? selectedAnnotationId ?? '' : ''}
       data-local-drawings-hidden={hideLocalDrawings ? 'true' : 'false'}
       data-ground-compass={showGroundCompass ? 'true' : 'false'}
       data-read-only-viewer={readOnlyViewer ? 'true' : 'false'}

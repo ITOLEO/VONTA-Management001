@@ -1,7 +1,9 @@
 @import "tailwindcss";
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 @theme {
   --font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Manrope", "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   --color-vonta-navy: #1B2A4A;
   --color-vonta-orange: #D4652F;
   --color-vonta-action: #A64011;
@@ -53,9 +55,26 @@ html[data-theme="dark"] {
   }
 
   body {
+    font-family: var(--font-sans);
     background-color: var(--vonta-bg-canvas);
     color: var(--vonta-text-primary);
     transition: background-color 140ms ease, color 140ms ease;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-display);
+  }
+
+  button,
+  input,
+  select,
+  textarea,
+  nav,
+  table {
+    font-family: var(--font-sans);
   }
 
   *:focus-visible {
@@ -64,25 +83,62 @@ html[data-theme="dark"] {
   }
 }
 
-/* L05: Provisional +3-4 px legibility scale for ultra-small labels & captions while keeping controls roomy */
-.text-\[10px\] {
-  font-size: 13px !important;
-  line-height: 1.35 !important;
-}
-.text-\[11px\] {
-  font-size: 14px !important;
-  line-height: 1.4 !important;
-}
-.text-\[12px\] {
-  font-size: 14.5px !important;
-  line-height: 1.45 !important;
-}
-.text-xs {
-  font-size: 14px !important;
-  line-height: 1.45 !important;
+/* Stage 01: Shared VONTA typography roles (Manrope headings, Inter body & controls) */
+.font-display {
+  font-family: var(--font-display);
 }
 
-/* L05: Real Dark Theme Token Overrides across page surfaces, cards, headers, drawers, inputs & borders */
+.vonta-display {
+  font-family: var(--font-display);
+  font-size: clamp(2.25rem, 4vw, 4rem);
+  line-height: 1.08;
+  letter-spacing: -0.028em;
+  font-weight: 700;
+  text-wrap: balance;
+}
+
+.vonta-page-title {
+  font-family: var(--font-display);
+  font-size: clamp(1.5rem, 1.85vw, 1.875rem);
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+}
+
+.vonta-section-title {
+  font-family: var(--font-display);
+  font-size: clamp(1.125rem, 1.25vw, 1.25rem);
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+  font-weight: 600;
+}
+
+.vonta-body {
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.55;
+}
+
+.vonta-control {
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  line-height: 1.43;
+}
+
+.vonta-meta {
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+/* Keep ultra-small legacy micro-labels legible at 12px without inflating 12–14px controls, clocks, or PIN IDs */
+.text-\[10px\],
+.text-\[11px\] {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+/* Real Dark Theme Token Overrides across page surfaces, cards, headers, drawers, inputs & borders */
 html[data-theme="dark"] .bg-\[\#F4F3EF\],
 html[data-theme="dark"] .bg-\[\#F8F8F6\],
 html[data-theme="dark"] .bg-\[\#FAF9F6\],
@@ -100,9 +156,12 @@ html[data-theme="dark"] .bg-\[\#F4F3EF\]\/60,
 html[data-theme="dark"] .bg-\[\#F4F3EF\]\/70,
 html[data-theme="dark"] .bg-\[\#F4F3EF\]\/75,
 html[data-theme="dark"] .bg-\[\#F4F3EF\]\/50,
+html[data-theme="dark"] .bg-\[\#F4F3EF\]\/40,
+html[data-theme="dark"] .bg-\[\#F8F9FA\],
 html[data-theme="dark"] .bg-\[\#FAFAFA\],
 html[data-theme="dark"] .bg-\[\#F5F7FA\],
-html[data-theme="dark"] .bg-\[\#EEF2F7\] {
+html[data-theme="dark"] .bg-\[\#EEF2F7\],
+html[data-theme="dark"] .bg-\[\#EDECE7\] {
   background-color: var(--vonta-bg-subtle) !important;
 }
 
@@ -152,8 +211,17 @@ html[data-theme="dark"] .bg-\[\#1B2A4A\] {
 }
 
 html[data-theme="dark"] .bg-\[\#FFF4EE\],
-html[data-theme="dark"] .bg-\[\#FFF3EB\] {
+html[data-theme="dark"] .bg-\[\#FFF3EB\],
+html[data-theme="dark"] .bg-\[\#FFF3EB\]\/60 {
   background-color: #362218 !important;
+}
+
+html[data-theme="dark"] .bg-\[\#E6F7F5\] {
+  background-color: #112F2C !important;
+}
+
+html[data-theme="dark"] .text-\[\#0F766E\] {
+  color: #5EEAD4 !important;
 }
 
 html[data-theme="dark"] .text-\[\#A64011\] {

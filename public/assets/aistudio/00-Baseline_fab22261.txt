@@ -1,0 +1,19 @@
+VONTA 00 | Record the active baseline
+
+Use the current Google AI Studio VONTA project.
+
+Start with App.tsx, package.json, both project route families. Locate their equivalents if paths differ.
+
+Inspect the active project. Make no edits. Identify the public route, sample project and signed-in project. Map their shell, Overview, PIN and Workspace entry points. Confirm the available build and test commands. Name any feature that only has sample data. Use the current files when the export and this project differ.
+
+1. Record a short baseline for the existing preview at 1440 × 900. If available, also inspect a narrow laptop and a phone. Record the actual viewport and browser zoom.
+2. Locate the blueprint list height cap, the PIN department source, the Workspace layer buttons and the annotation hit targets. Record paths. Avoid printing secrets or personal records.
+3. The latest user decisions control this revision. PIN keeps its status toolbar. Workspace gets two separate popovers. Advisor Center opens an unavailable state. Later instructions arrive one stage at a time.
+
+Check
+BASE-1 — Verify the project name and active routes from source. Identify how entered sample and signed-in users reach PIN and Workspace.
+BASE-2 — Report one source path per feature and which screens you actually viewed. Separate source findings from browser observations.
+
+Keep this step read-only.
+
+Return the active routes, paths, available checks, and any gap. Give one next step. Stop after stage 00.
