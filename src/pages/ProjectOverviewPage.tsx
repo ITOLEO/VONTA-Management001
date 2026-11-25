@@ -1,3 +1,4 @@
+import { isProjectLead } from '../domain/accountTypes';
 import { useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import { ArrowLeft, Box } from 'lucide-react';
@@ -257,7 +258,7 @@ export function ProjectOverviewPage() {
                 departments={departments}
                 ledger={addendum.budgetLedger}
                 accountingHref={routes.modulePath('accounting')}
-                canAddDepartment={addendum.activePersona.role === 'contractor'}
+                canAddDepartment={isProjectLead(addendum.activePersona.role)}
                 onAddDepartment={({ name, pinColorHex }) =>
                   addDepartment({ name, defaultPinColor: pinColorHex })
                 }

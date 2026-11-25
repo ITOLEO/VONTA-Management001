@@ -1,3 +1,4 @@
+import { supabase } from '../lib/supabaseClient';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
@@ -46,6 +47,13 @@ export function PrivateProjectsPage() {
     removeProjectFromCache,
   } = usePrivateProjects();
 
+  const [inviteNotice,setInviteNotice]=useState('');
+  async function acceptInvite(id:string) {
+    if(!supabase)return;
+    const {error}=await supabase.rpc('vonta_accept_invite',{mid:id});
+    if(error){setInviteNotice(error.message);return;}
+    setInviteNotice('Invitation accepted.');await refreshDirectory();
+  }
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
   const [sortMode, setSortMode] = useState<SortMode>('name-asc');
@@ -342,6 +350,7 @@ export function PrivateProjectsPage() {
                   Invitation pending ({pendingInvitations.length})
                 </div>
                 <ul className="mt-3 divide-y divide-[#D9DEE2]">
+                  {inviteNotice && <li role="status">{inviteNotice}</li>}
                   {pendingInvitations.map((inv) => (
                     <li
                       key={inv.id}
@@ -351,9 +360,7 @@ export function PrivateProjectsPage() {
                         <span className="font-semibold text-[#1B2A4A]">{inv.projectName}</span>
                         <span className="text-[#4F5C67]"> · Role: {formatRoleLabel(inv.role)}</span>
                       </div>
-                      <span className="rounded-md border border-[#D4652F]/35 bg-[#FFF3EB] px-2.5 py-0.5 text-[13px] font-medium text-[#A64011]">
-                        Invitation pending
-                      </span>
+                      <button className="vt-btn quiet" onClick={()=>void acceptInvite(inv.id)}>Accept invitation</button>
                     </li>
                   ))}
                 </ul>

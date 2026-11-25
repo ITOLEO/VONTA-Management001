@@ -1,3 +1,5 @@
+import { demoAccounts, type DemoRole } from '../domain/demoAccounts';
+import { isProjectLead } from '../domain/accountTypes';
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import type { MembershipStatus, ProjectRole } from '../domain/accountTypes';
 import type { Department } from '../domain/types';
@@ -196,6 +198,13 @@ const INITIAL_DEMO_MEMBERS: DemoPersonaMember[] = [
     canShareWorkspaceView: true,
     division: 'Civil',
     teamId: 'team-civil-a',
+  },
+  {
+    accountId: 'demo-acct-architect', userId: 'demo-user-architect', membershipId: 'mem-demo-08',
+    workerCode: 'ARC-001', displayName: 'architect-demo', email: 'architect-demo@demo.vonta.example',
+    role: 'architect', profession: 'Architect', joinedAt: '2026-06-12', status: 'active',
+    hasMandorGrant: false, hasAccountingGrant: true, canDownloadWorkspaceView: true,
+    canShareWorkspaceView: true, division: 'Civil', teamId: 'team-civil-a',
   },
   {
     accountId: 'demo-acct-owner',
@@ -605,10 +614,11 @@ export interface DemoAddendumContextValue {
 
 const DemoAddendumContext = createContext<DemoAddendumContextValue | null>(null);
 
-export const DemoAddendumProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [members, setMembers] = useState<DemoPersonaMember[]>(() =>
-    readStoredDemoMembers(INITIAL_DEMO_MEMBERS)
-  );
+export const DemoAddendumProvider: React.FC<{ children: React.ReactNode; lockedRole?: DemoRole | null }> = ({ children, lockedRole }) => {
+  const [members, setMembers] = useState<DemoPersonaMember[]>(() => {
+    const saved = readStoredDemoMembers(INITIAL_DEMO_MEMBERS);
+    return [...saved, ...INITIAL_DEMO_MEMBERS.filter(member=>!saved.some(m=>m.accountId===member.accountId))];
+  });
   const [activeAccountId, setActiveAccountId] = useState<string>(() =>
     readStoredActiveAccountId('demo-acct-contractor')
   );
@@ -645,15 +655,20 @@ export const DemoAddendumProvider: React.FC<{ children: React.ReactNode }> = ({ 
   ]);
 
   const activePersona = useMemo(
-    () => members.find((m) => m.accountId === activeAccountId) ?? members[0],
-    [members, activeAccountId]
+    () => {
+      const account = demoAccounts.find(a=>a.role===lockedRole);
+      const member = members.find(m=>m.accountId === (account ? 'demo-acct-'+lockedRole : activeAccountId)) ?? members[0];
+      return account ? {...member, displayName:account.name, email:account.email} : member;
+    },
+    [members, activeAccountId, lockedRole]
   );
 
   const switchPersona = useCallback((nextAccountId: string) => {
+    if (lockedRole) return;
     clearTemporaryDrawingMemory();
     writeStoredActiveAccountId(nextAccountId);
     setActiveAccountId(nextAccountId);
-  }, []);
+  }, [lockedRole]);
 
   const updateDemoMemberGrants = useCallback(
     (
@@ -784,9 +799,9 @@ export const DemoAddendumProvider: React.FC<{ children: React.ReactNode }> = ({ 
           hasMandorGrant: res.grantedMembership.hasMandorGrant,
           hasAccountingGrant: res.grantedMembership.role === 'accounting',
           canDownloadWorkspaceView:
-            res.grantedMembership.role === 'owner' || res.grantedMembership.role === 'contractor',
+            res.grantedMembership.role === 'owner' || isProjectLead(res.grantedMembership.role),
           canShareWorkspaceView:
-            res.grantedMembership.role === 'owner' || res.grantedMembership.role === 'contractor',
+            res.grantedMembership.role === 'owner' || isProjectLead(res.grantedMembership.role),
           division: 'Civil',
           teamId: 'team-civil-a',
         };
@@ -923,7 +938,7 @@ export const DemoAddendumProvider: React.FC<{ children: React.ReactNode }> = ({ 
       }
       const isSelf = activePersona.userId === targetMember.userId;
       const canRecordForOther =
-        activePersona.role === 'contractor' ||
+        isProjectLead(activePersona.role) ||
         (activePersona.hasMandorGrant && activePersona.division === targetMember.division);
       if (!isSelf && !canRecordForOther) {
         return {
@@ -959,7 +974,7 @@ export const DemoAddendumProvider: React.FC<{ children: React.ReactNode }> = ({ 
       if (!reason) return { ok: false, message: 'A correction reason is required.' };
       if (!evidenceNote) return { ok: false, message: 'Validated daily evidence reference is required.' };
       const canCorrect =
-        activePersona.role === 'contractor' ||
+        isProjectLead(activePersona.role) ||
         (activePersona.hasMandorGrant && shift.assignedMandorUserIds.includes(activePersona.userId));
       if (!canCorrect) {
         return {
@@ -1288,6 +1303,7 @@ export const DemoAddendumProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   const recordBudgetAllocation = useCallback(
     (input: { departmentId: string; periodMonth: string; amount: number; note?: string }) => {
+      if (!isProjectLead(activePersona.role) && activePersona.role !== 'accounting' && !activePersona.hasAccountingGrant) return {ok:false,message:'Accounting access is required.'};
       if (!Number.isFinite(input.amount) || input.amount < 0) {
         return { ok: false, message: 'Allocation amount must be 0 or greater.' };
       }
@@ -1311,7 +1327,7 @@ export const DemoAddendumProvider: React.FC<{ children: React.ReactNode }> = ({ 
       }));
       return { ok: true, message: `Recorded monthly allocation for ${input.periodMonth}.` };
     },
-    [budgetLedger.projectId, budgetLedger.currency, activePersona.displayName]
+    [budgetLedger.projectId, budgetLedger.currency, activePersona]
   );
 
   const postBudgetCharge = useCallback(
@@ -1323,6 +1339,7 @@ export const DemoAddendumProvider: React.FC<{ children: React.ReactNode }> = ({ 
       description: string;
       sourceRecordId: string;
     }) => {
+      if (!isProjectLead(activePersona.role) && activePersona.role !== 'accounting' && !activePersona.hasAccountingGrant) return {ok:false,message:'Accounting access is required.'};
       if (!Number.isFinite(input.amount) || input.amount === 0) {
         return { ok: false, message: 'Charge amount must be non-zero.' };
       }
@@ -1345,7 +1362,7 @@ export const DemoAddendumProvider: React.FC<{ children: React.ReactNode }> = ({ 
       }));
       return { ok: true, message: 'Posted department usage to budget ledger.' };
     },
-    [budgetLedger.projectId, budgetLedger.currency, activePersona.displayName]
+    [budgetLedger.projectId, budgetLedger.currency, activePersona]
   );
 
   const createDemoShare = useCallback(
@@ -1535,6 +1552,8 @@ export const DemoAddendumProvider: React.FC<{ children: React.ReactNode }> = ({ 
 
   return <DemoAddendumContext.Provider value={value}>{children}</DemoAddendumContext.Provider>;
 };
+
+export function useOptionalDemoAddendum() { return useContext(DemoAddendumContext); }
 
 export function useDemoAddendum(): DemoAddendumContextValue {
   const ctx = useContext(DemoAddendumContext);

@@ -1,4 +1,5 @@
-import React, { useMemo, useState } from 'react';
+import { LiveTeamDirectory } from '../components/LiveTeamDirectory';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { Search, UserPlus, Users } from 'lucide-react';
 import { ProjectNavbar } from '../components/ProjectNavbar';
@@ -355,120 +356,13 @@ export const DemoUsersAccessPage: React.FC = () => {
 
 export const PrivateUsersAccessPage: React.FC = () => {
   const { project: projectId = '' } = useParams<{ project: string }>();
-  const { projects, activeProject } = usePrivateProjects();
-  const project = projects.find((p) => p.id === projectId) ?? activeProject;
-  const routes = getProjectRoutes('/projects', projectId);
-  const railGroups = useMemo(() => buildTeamRailGroups(routes, 'team'), [routes]);
-  const [inviteOpen, setInviteOpen] = useState(false);
-
-  const memberRole: ProjectRole = project?.membership.role ?? 'worker';
-  const canInvite = canInviteToProject(memberRole, project?.membership.status ?? 'active');
-
-  const handleLiveLookup = (): ExactEmailLookupResult => ({
-    ok: false,
-    code: 'FORBIDDEN',
-    message:
-      'Live registered-account lookup requires a configured Supabase identity backend in this environment.',
-  });
-
-  return (
-    <div className="min-h-dvh bg-[#F4F3EF] flex flex-col text-[#1B2A4A]">
-      <PrivateNavbar
-        inProjectContext
-        projectId={projectId}
-        projectName={project?.name}
-        hasContextualRail
-      />
-      <div className="flex flex-1 min-h-[calc(100dvh-60px)]">
-        <ContextualRail
-          moduleLabel="Team"
-          groups={railGroups}
-          projectSettingsPath={routes.settingsPath}
-        />
-        <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8">
-          <div className="mx-auto w-full max-w-[1360px] space-y-5">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="flex items-center gap-2">
-                <Users className="h-5 w-5 text-[#A64011]" aria-hidden="true" />
-                <div>
-                  <h1 className="vonta-page-title text-[#1B2A4A]">Team</h1>
-                  <p className="text-[14px] text-[#4F5C67]">
-                    Active members of {project?.name ?? 'this project'}.
-                  </p>
-                </div>
-              </div>
-              {canInvite && (
-                <button
-                  type="button"
-                  onClick={() => setInviteOpen(true)}
-                  className="inline-flex min-h-[42px] items-center gap-2 rounded-lg bg-[#A64011] px-4 py-2 text-[14px] font-semibold text-white hover:bg-[#8C350E]"
-                >
-                  <UserPlus className="h-4 w-4" aria-hidden="true" />
-                  Invite member
-                </button>
-              )}
-            </div>
-
-            <div className="overflow-x-auto rounded-xl border border-[#D9DEE2] bg-white">
-              <table className="w-full min-w-[640px] border-collapse text-left">
-                <thead className="border-b border-[#D9DEE2] bg-[#FAF9F6] text-[12px] font-semibold uppercase tracking-wide text-[#4F5C67]">
-                  <tr>
-                    <th scope="col" className="w-[34%] px-5 py-3.5">
-                      Name
-                    </th>
-                    <th scope="col" className="w-[26%] px-5 py-3.5">
-                      Role
-                    </th>
-                    <th scope="col" className="w-[22%] px-5 py-3.5">
-                      Project tenure
-                    </th>
-                    <th scope="col" className="w-[18%] px-5 py-3.5 text-right">
-                      Attendance <span aria-hidden="true">%</span>
-                      <span className="sr-only">percentage</span>
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#E6E8EB] text-[14px]">
-                  <tr className="h-[60px]">
-                    <td className="px-5 py-3 font-semibold text-[#1B2A4A]">
-                      {project?.contractorDisplayName ?? 'Current Member'}
-                    </td>
-                    <td className="px-5 py-3">
-                      <span className="inline-flex rounded-md border border-[#D9DEE2] bg-[#FAF9F6] px-2.5 py-1 text-[13px] font-medium text-[#1B2A4A]">
-                        {formatRoleLabel(memberRole, project?.membership)}
-                      </span>
-                    </td>
-                    <td className="px-5 py-3 text-[#4F5C67]">
-                      {project?.createdAt ? formatProjectTenure(project.createdAt.slice(0, 10)) : 'Active'}
-                    </td>
-                    <td className="px-5 py-3 text-right font-semibold tabular-nums text-[#1B2A4A]">
-                      —
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-
-            <Link
-              to={routes.overviewPath}
-              className="inline-flex text-[14px] font-semibold text-[#A64011] hover:underline"
-            >
-              Back to Project Overview
-            </Link>
-          </div>
-        </main>
-      </div>
-
-      <InviteMemberModal
-        open={inviteOpen}
-        projectName={project?.name ?? 'Project'}
-        onClose={() => setInviteOpen(false)}
-        onLookupEmail={handleLiveLookup}
-        onSendInvitation={() => ({
-          ok: false,
-          message: 'Live invitation delivery requires a configured Supabase identity & SMTP provider.',
-        })}
-      />
-    </div>
-  );
+  const { activeProject, loadActiveProject, activeProjectError } = usePrivateProjects();
+  const project = activeProject?.id===projectId ? activeProject : null;
+  useEffect(()=>{if(projectId)void loadActiveProject(projectId);},[projectId,loadActiveProject]);
+  const routes=getProjectRoutes('/projects',projectId);
+  const railGroups=useMemo(()=>buildTeamRailGroups(routes,'team'),[routes]);
+  return <div className="min-h-dvh bg-white text-[#1B2A4A]"><PrivateNavbar inProjectContext projectId={projectId} projectName={project?.name} hasContextualRail/>
+    <div className="flex"><ContextualRail moduleLabel="Team" groups={railGroups} projectSettingsPath={routes.settingsPath}/>
+      <main className="min-w-0 flex-1 p-6">{project?<LiveTeamDirectory key={projectId} project={project}/>:<p role="status">{activeProjectError?.message||'Loading project…'}</p>}</main>
+    </div></div>;
 };

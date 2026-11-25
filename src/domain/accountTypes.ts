@@ -380,16 +380,20 @@ export const COMMON_TIMEZONES: ReadonlyArray<{ value: string; label: string }> =
   { value: 'Pacific/Auckland', label: 'Pacific/Auckland (NZST/NZDT · DST)' },
 ];
 
+export function isProjectLead(role: ProjectRole | null | undefined): boolean {
+  return role === 'architect' || role === 'contractor';
+}
+
 export function canEditProjectSettings(role: ProjectRole | null | undefined): boolean {
-  return role === 'contractor';
+  return isProjectLead(role);
 }
 
 export function canPublishModel(role: ProjectRole | null | undefined): boolean {
-  return role === 'contractor';
+  return isProjectLead(role);
 }
 
 export function canManageProjectAccess(role: ProjectRole | null | undefined): boolean {
-  return role === 'contractor';
+  return isProjectLead(role);
 }
 
 export function formatRoleLabel(

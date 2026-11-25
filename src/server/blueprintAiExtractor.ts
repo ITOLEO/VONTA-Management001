@@ -6,7 +6,7 @@ import type {
 } from '../domain/accountTypes';
 import { validateGeometryProposal } from '../domain/blueprintGeometry';
 
-export const BLUEPRINT_AI_MODEL = 'gemini-4-hydrogen';
+export const BLUEPRINT_AI_MODEL = process.env.GEMINI_MODEL?.trim() || 'gemini-3.5-flash-lite';
 
 export class AiProviderUnavailableError extends Error {
   code: string;
@@ -64,14 +64,7 @@ export class GeminiBlueprintExtractor implements BlueprintAiExtractor {
       );
     }
 
-    const ai = new GoogleGenAI({
-      apiKey,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        },
-      },
-    });
+    const ai = new GoogleGenAI({ apiKey });
 
     const promptText = [
       'You are an architectural floor-plan geometry extractor for VONTA Management.',

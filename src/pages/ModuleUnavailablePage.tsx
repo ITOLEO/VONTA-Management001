@@ -1,3 +1,4 @@
+import { isProjectLead } from '../domain/accountTypes';
 import React, { useMemo, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { CheckCircle2, Plus, Receipt, Wallet } from 'lucide-react';
@@ -212,7 +213,7 @@ export function ModuleUnavailablePage({ moduleKey }: { moduleKey: string }) {
                     Department Ledger ({departments.length} departments · {selectedMonth})
                   </h2>
 
-                  {addendum.activePersona.role === 'contractor' && (
+                  {isProjectLead(addendum.activePersona.role) && (
                     <form onSubmit={handleAddDepartment} className="flex items-center gap-2">
                       <input
                         type="text"

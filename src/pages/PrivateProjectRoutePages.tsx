@@ -1,3 +1,4 @@
+import { LiveBudget } from './LiveBudget';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
@@ -2421,7 +2422,8 @@ export function PrivateModuleUnavailablePage({ moduleKey }: { moduleKey: string 
           groups={railGroups}
           projectSettingsPath={routes.settingsPath}
         />
-        <main className="flex min-w-0 flex-1 items-center justify-center px-4 py-12">
+        <main className="flex min-w-0 flex-1 items-start justify-center px-4 py-12">
+          {activeModule==='accounting' && project ? <div className="w-full"><h1 className="vonta-page-title">Department accounting</h1><LiveBudget key={project.id} project={project} editable/></div> :
           <section
             aria-labelledby="module-dev-heading"
             data-testid="module-dev-card"
@@ -2439,7 +2441,7 @@ export function PrivateModuleUnavailablePage({ moduleKey }: { moduleKey: string 
             <p className="mt-2 text-[15px] leading-[22px] text-[#4F5C67]">
               This module is in development.
             </p>
-          </section>
+          </section>}
         </main>
       </div>
     </div>

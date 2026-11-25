@@ -1,3 +1,4 @@
+import { supabase } from '../lib/supabaseClient';
 import type {
   AuditEventRecord,
   AuditObjectType,
@@ -229,12 +230,23 @@ export const privateApi = {
   /**
    * Uploads blueprint file with real XHR upload progress events (no fake timers).
    */
-  uploadBlueprintWithProgress(
+  async uploadBlueprintWithProgress(
     accessToken: string,
     projectId: string,
     payload: BlueprintUploadPayload,
     onProgress?: (percent: number) => void
   ): Promise<BlueprintUploadResponse> {
+    const endpoint = '/api/projects/'+encodeURIComponent(projectId)+'/blueprints';
+    if (payload.base64Data.length > 3 * 1024 * 1024) {
+      if (!supabase) throw new Error('Private blueprint storage is unavailable.');
+      const {transferId,path,token}=await requestJson<{transferId:string;path:string;token:string}>(endpoint+'/transfer',accessToken,{method:'POST'});
+      const bytes = Uint8Array.from(atob(payload.base64Data),char=>char.charCodeAt(0));
+      const {error}=await supabase.storage.from('vonta-blueprints').uploadToSignedUrl(path,token,new Blob([bytes],{type:payload.mimeType}),{contentType:payload.mimeType});
+      if(error)throw new Error('Could not transfer the drawing to private storage. Select the file and retry.');
+      onProgress?.(100);
+      const {base64Data:uploadedBytes,...metadata}=payload;
+      return requestJson<BlueprintUploadResponse>(endpoint+'/upload',accessToken,{method:'POST',body:JSON.stringify({...metadata,transferId})});
+    }
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('POST', `/api/projects/${encodeURIComponent(projectId)}/blueprints/upload`);
@@ -597,7 +609,7 @@ export const privateApi = {
         userId: string;
         displayName: string;
         email: string;
-        role: 'contractor' | 'owner' | 'worker' | 'accounting';
+        role: 'contractor' | 'architect' | 'owner' | 'worker' | 'accounting';
         status: 'active' | 'invited' | 'revoked';
         hasMandorGrant: boolean;
         hasAccountingGrant: boolean;

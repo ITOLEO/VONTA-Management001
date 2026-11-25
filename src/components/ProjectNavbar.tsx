@@ -1,3 +1,5 @@
+import { useDemoAddendum } from '../context/DemoAddendumContext';
+import { endSampleSession } from '../pages/AccountDashboards';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
@@ -54,6 +56,7 @@ export function ProjectNavbar({
   sectionLabel,
   hasContextualRail = true,
 }: ProjectNavbarProps) {
+  const { activePersona } = useDemoAddendum();
   const { state, blueprintSheets, resetDemo } = useDemo();
   const { toggleMobileRail } = useLayoutShell();
   const location = useLocation();
@@ -452,8 +455,8 @@ export function ProjectNavbar({
 
             <ProfileMenu
               mode="demo"
-              displayName={DEMO_ACCOUNT_DISPLAY_NAME}
-              emailOrSubtitle={DEMO_ACCOUNT_EMAIL}
+              displayName={activePersona.displayName}
+              emailOrSubtitle={activePersona.email}
               avatarUrl={DEMO_ACCOUNT_AVATAR_SVG}
               badgeText="Sample workspace · Local session"
               timezoneLabel={state.project.timezone}
@@ -463,6 +466,7 @@ export function ProjectNavbar({
                 if (next) setActionsCloseSignal((c) => c + 1);
                 setOpenMenu(next ? 'profile' : null);
               }}
+              onSignOut={() => {void endSampleSession();}}
               onResetDemo={() => setResetModalOpen(true)}
               triggerTestId="profile-menu-trigger"
             />

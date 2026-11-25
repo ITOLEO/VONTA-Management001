@@ -1,3 +1,4 @@
+import { isProjectLead } from '../domain/accountTypes';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation, useParams, useSearchParams } from 'react-router-dom';
 import {
@@ -217,7 +218,7 @@ export function WorkListPage() {
   };
 
   const hasQcAuthority =
-    addendum.activePersona.role === 'contractor' || addendum.activePersona.role === 'owner';
+    isProjectLead(addendum.activePersona.role) || addendum.activePersona.role === 'owner';
 
   const handleMovePinStatus = (pin: SpatialPin, targetStatus: PinWorkStatus) => {
     if (pin.status === targetStatus) return;

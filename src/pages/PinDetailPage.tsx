@@ -1,3 +1,4 @@
+import { isProjectLead } from '../domain/accountTypes';
 import { useMemo, useState } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -107,7 +108,7 @@ export function PinDetailPage() {
     (d) => d.name.toLowerCase() === pin.department.toLowerCase()
   );
   const hasQcAuthority =
-    addendum.activePersona.role === 'contractor' || addendum.activePersona.role === 'owner';
+    isProjectLead(addendum.activePersona.role) || addendum.activePersona.role === 'owner';
 
   const handleStatusTransition = (nextStatus: PinWorkStatus) => {
     setStatusError(null);

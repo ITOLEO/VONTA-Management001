@@ -1,4 +1,8 @@
+import { randomUUID } from 'node:crypto';
+import { isProjectLead } from './src/domain/accountTypes.ts';
 import 'dotenv/config';
+import { sampleAccessRouter } from './src/server/demoAccess.ts';
+import { demoAccounts, isDeveloper } from './src/domain/demoAccounts.ts';
 import express, { type Request, type Response } from 'express';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import path from 'node:path';
@@ -18,7 +22,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SECRET_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 function createSupabaseAdmin(): SupabaseClient | null {
   if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
@@ -84,7 +88,7 @@ export function createVontaApp(options?: CreateVontaAppOptions) {
       res.status(503).json({
         code: 'SUPABASE_NOT_CONFIGURED',
         message:
-          'Supabase server credentials (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY) are not configured in this environment.',
+          'Supabase server credentials (SUPABASE_URL and SUPABASE_SECRET_KEY) are not configured in this environment.',
       });
       return null;
     }
@@ -146,6 +150,7 @@ export function createVontaApp(options?: CreateVontaAppOptions) {
     return {
       actor: {
         userId: data.user.id,
+        isPlatformDeveloper: isDeveloper(data.user.app_metadata),
         email: data.user.email,
         displayName,
       },
@@ -188,7 +193,7 @@ export function createVontaApp(options?: CreateVontaAppOptions) {
       res.status(503).json({
         code: 'SUPABASE_NOT_CONFIGURED',
         message:
-          'Supabase server credentials (SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY) are not configured in this environment.',
+          'Supabase server credentials (SUPABASE_URL and SUPABASE_SECRET_KEY) are not configured in this environment.',
       });
       return null;
     }
@@ -210,12 +215,36 @@ export function createVontaApp(options?: CreateVontaAppOptions) {
     return {
       actor: {
         userId: data.user.id,
+        isPlatformDeveloper: isDeveloper(data.user.app_metadata),
         email: data.user.email,
         displayName,
       },
       addendum: activeAddendum,
     };
   }
+
+  app.use('/api/demo', sampleAccessRouter(defaultSupabaseAdmin));
+  app.get('/api/admin/directory', async (req, res) => {
+    res.setHeader('Cache-Control', 'private, no-store');
+    try {
+      const auth = await requireAuthenticatedActor(req, res);
+      if (!auth) return;
+      if (!auth.actor.isPlatformDeveloper) { res.status(403).json({message:'Developer access required.'}); return; }
+      if (!defaultSupabaseAdmin) { res.sendStatus(503); return; }
+      const page = Math.max(1, Number(req.query.page || 1));
+      if (!Number.isSafeInteger(page)) { res.sendStatus(400); return; }
+      const [users, activity] = await Promise.all([
+        defaultSupabaseAdmin.auth.admin.listUsers({page, perPage:25}),
+        defaultSupabaseAdmin.from('demo_account_activity').select('role,last_sign_in_at'),
+      ]);
+      if (users.error || activity.error) { res.status(503).json({message:'Account directory unavailable. Check migrations and Auth configuration.'}); return; }
+      res.json({
+        accounts:users.data.users.map(u => ({id:u.id,email:u.email,createdAt:u.created_at,lastSignIn:u.last_sign_in_at})),
+        nextPage:users.data.nextPage ?? null,
+        demos:demoAccounts.map(a => ({...a,lastSignIn:activity.data.find(row=>row.role===a.role)?.last_sign_in_at ?? null})),
+      });
+    } catch (err) { handleRouteError(res, err); }
+  });
 
   // Health & environment configuration status (never leaks secrets)
   app.get('/api/health', (_req, res) => {
@@ -323,15 +352,42 @@ export function createVontaApp(options?: CreateVontaAppOptions) {
   });
 
   // Prompt 3: Upload calibrated blueprint file & start durable AI + deterministic job
+  app.post('/api/projects/:projectId/blueprints/transfer', async (req,res) => {
+    const auth = await requireAuthenticatedActor(req,res);
+    if (!auth) return;
+    try {
+      const project = await auth.service.getProjectDetail(auth.actor, req.params.projectId);
+      if (!isProjectLead(project.membership.role)) { res.sendStatus(403); return; }
+      if (!defaultSupabaseAdmin) { res.sendStatus(503); return; }
+      const transferId = randomUUID();
+      const path = ['incoming', project.id, auth.actor.userId, transferId].join('/');
+      const {data,error} = await defaultSupabaseAdmin.storage.from('vonta-blueprints').createSignedUploadUrl(path);
+      if (error) throw new ServiceError(503,'STORAGE_UNAVAILABLE','Private blueprint storage is unavailable.');
+      res.setHeader('Cache-Control','private, no-store');
+      res.json({ transferId, path, token:data.token });
+    } catch (err) { handleRouteError(res,err); }
+  });
   app.post('/api/projects/:projectId/blueprints/upload', async (req, res) => {
     const auth = await requireAuthenticatedActor(req, res);
     if (!auth) return;
     try {
-      const result = await auth.service.submitBlueprintJob(
-        auth.actor,
-        req.params.projectId,
-        req.body ?? {}
-      );
+      const payload = {...req.body};
+      let incoming: string | undefined;
+      if (payload.transferId) {
+        if (!/^[a-f0-9-]{36}$/.test(payload.transferId) || !defaultSupabaseAdmin) {
+          throw new ServiceError(400,'INVALID_TRANSFER','Invalid blueprint transfer.');
+        }
+        const project = await auth.service.getProjectDetail(auth.actor, req.params.projectId);
+        if (!isProjectLead(project.membership.role)) {res.sendStatus(403);return;}
+        incoming = ['incoming',project.id,auth.actor.userId,payload.transferId].join('/');
+        const {data,error} = await defaultSupabaseAdmin.storage.from('vonta-blueprints').download(incoming);
+        if (error || !data) throw new ServiceError(400,'TRANSFER_MISSING','Select the blueprint file and retry.');
+        payload.base64Data = Buffer.from(await data.arrayBuffer()).toString('base64');
+      }
+      const result = await (async () => {
+        try { return await auth.service.submitBlueprintJob(auth.actor,req.params.projectId,payload as Parameters<VontaDomainService['submitBlueprintJob']>[2]); }
+        finally { if(incoming) await defaultSupabaseAdmin!.storage.from('vonta-blueprints').remove([incoming]); }
+      })();
       res.status(result.deduplicated ? 200 : 201).json(result);
     } catch (err) {
       handleRouteError(res, err);
@@ -483,6 +539,14 @@ export function createVontaApp(options?: CreateVontaAppOptions) {
         req.params.projectId,
         req.params.assetId
       );
+      if (defaultSupabaseAdmin && blob.buffer.length > 3 * 1024 * 1024) {
+        const {data:asset,error} = await defaultSupabaseAdmin.from('blueprint_assets').select('storage_path').eq('project_id',req.params.projectId).eq('id',req.params.assetId).single();
+        if (error || !asset) throw new ServiceError(404,'SOURCE_MISSING','The drawing source is unavailable.');
+        const signed = await defaultSupabaseAdmin.storage.from('vonta-blueprints').createSignedUrl(asset.storage_path,30);
+        if (signed.error) throw new ServiceError(503,'STORAGE_UNAVAILABLE','Private blueprint storage is unavailable.');
+        res.setHeader('Cache-Control','private, no-store');
+        res.redirect(302,signed.data.signedUrl); return;
+      }
       res.setHeader('Content-Type', blob.mimeType);
       res.setHeader('Cache-Control', 'private, no-store');
       res.setHeader('Content-Disposition', `inline; filename="${blob.fileName.replace(/"/g, '')}"`);
@@ -927,7 +991,8 @@ export function createVontaApp(options?: CreateVontaAppOptions) {
 async function startServer() {
   defaultAddendumService.startCutoffScheduler(30_000);
   const app = createVontaApp();
-  const PORT = Number(process.env.PORT) || 3000;
+  const portFlag = process.argv.indexOf('--port');
+  const PORT = Number(portFlag >= 0 ? process.argv[portFlag + 1] : process.env.PORT) || 3000;
 
   if (process.env.NODE_ENV !== 'production') {
     const { createServer: createViteServer } = await import('vite');

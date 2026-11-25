@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS public.attendance_shifts (
   shift_start_utc timestamptz,
   cutoff_utc timestamptz GENERATED ALWAYS AS (
     CASE WHEN eligibility = 'scheduled' AND shift_start_utc IS NOT NULL
-      THEN shift_start_utc + interval '1 hour'
+      THEN ((shift_start_utc at time zone 'UTC') + interval '1 hour') at time zone 'UTC'
       ELSE NULL
     END
   ) STORED,

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Compass,
+  Plug,
   FileText,
   HelpCircle,
   MapPin,
@@ -250,6 +251,7 @@ export const ProjectHeaderActions: React.FC<ProjectHeaderActionsProps> = ({
 
   return (
     <div ref={rootRef} className="relative flex shrink-0 items-center gap-0.5 sm:gap-1">
+      <Link to={routes.modulePath('integrations')} aria-label="Project integrations" title="Project integrations" className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#4F5C67] hover:bg-[#F4F3EF]"><Plug size={16}/></Link>
       {/* Feedback (visible directly on xl+; accessible via overflow on < xl) */}
       <div className="relative hidden xl:block">
         <button

@@ -1,3 +1,4 @@
+import { useOptionalDemoAddendum } from '../context/DemoAddendumContext';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import {
@@ -139,10 +140,11 @@ export function ProfileSettingsPage({ demoMode = false }: ProfileSettingsPagePro
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialSectionParam]);
 
-  const effectiveEmail = demoMode ? DEMO_ACCOUNT_EMAIL : profile?.email ?? user?.email ?? '';
+  const persona = useOptionalDemoAddendum()?.activePersona;
+  const effectiveEmail = demoMode ? persona?.email ?? DEMO_ACCOUNT_EMAIL : profile?.email ?? user?.email ?? '';
   const effectivePhoneStatus = demoMode ? 'unverified' : profile?.phoneStatus ?? 'unverified';
   const effectiveInitialName = demoMode
-    ? DEMO_ACCOUNT_DISPLAY_NAME
+    ? persona?.displayName ?? DEMO_ACCOUNT_DISPLAY_NAME
     : profile?.displayName ?? '';
   const effectiveInitialPhone = demoMode ? '+62 811 2000 403' : profile?.phoneNumber ?? '';
   const effectiveInitialTz = demoMode
@@ -157,7 +159,7 @@ export function ProfileSettingsPage({ demoMode = false }: ProfileSettingsPagePro
   // 1. Profile information
   const [displayName, setDisplayName] = useState(effectiveInitialName);
   const [phoneNumber, setPhoneNumber] = useState(effectiveInitialPhone);
-  const [demoBaselineName, setDemoBaselineName] = useState(DEMO_ACCOUNT_DISPLAY_NAME);
+  const [demoBaselineName, setDemoBaselineName] = useState(effectiveInitialName);
   const [demoBaselinePhone, setDemoBaselinePhone] = useState('+62 811 2000 403');
   const [personalErrors, setPersonalErrors] = useState<{
     displayName?: string;

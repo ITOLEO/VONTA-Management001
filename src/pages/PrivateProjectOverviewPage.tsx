@@ -1,3 +1,4 @@
+import { demoAccounts } from '../domain/demoAccounts';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
@@ -31,9 +32,9 @@ import { OverviewBlueprintRailSlot } from '../components/OverviewBlueprintRailSl
 import { OverviewKpiRow } from '../components/OverviewKpiRow';
 import { BlueprintLightboxModal } from '../components/BlueprintLightboxModal';
 import { DepartmentDashboardSection } from '../components/DepartmentDashboardSection';
-import { BudgetDashboardSection } from '../components/BudgetDashboardSection';
+import { LiveBudget } from './LiveBudget';
 import type { DepartmentAttendanceDayMetric } from '../domain/attendanceEngine';
-import type { ProjectBudgetLedger } from '../domain/budgetLedger';
+
 import type { Department } from '../domain/types';
 import { getProjectRoutes } from '../utils/projectRoutes';
 import { buildOverviewRailGroups } from '../utils/moduleNavConfig';
@@ -169,17 +170,6 @@ export function PrivateProjectOverviewPage() {
     [liveSheets, railQuery, railDeptFilter, departments]
   );
 
-  const liveEmptyBudgetLedger = useMemo<ProjectBudgetLedger>(
-    () => ({
-      projectId: project?.id ?? projectId,
-      currency: 'IDR',
-      allocations: [],
-      charges: [],
-      commitments: [],
-    }),
-    [project?.id, projectId]
-  );
-
   if (activeProjectLoading && !project) {
     return (
       <div className="min-h-dvh flex flex-col bg-[#F4F3EF] text-[#1B2A4A]">
@@ -275,6 +265,12 @@ export function PrivateProjectOverviewPage() {
 
         <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 lg:px-8">
           <div className="w-full">
+            <nav className="vt-role-tools" aria-label="Tools for your project role">
+              <strong>{formatRoleLabel(project.membership.role, project.membership)} tools</strong>
+              {demoAccounts.find(a=>a.role===project.membership.role)?.tasks.filter(([,slug])=>Boolean(slug)).map(([label,slug])=>
+                <Link key={slug} to={routes.modulePath(slug)}>{label}</Link>
+              )}
+            </nav>
             {/* Upper Band: Left Context & Open Workspace | Right Blueprint Summary Hub */}
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(300px,350px)_minmax(0,1fr)] lg:items-stretch xl:grid-cols-[minmax(320px,380px)_minmax(0,1fr)]">
               <div className="flex min-w-0 flex-col gap-5">
@@ -414,14 +410,7 @@ export function PrivateProjectOverviewPage() {
 
             {/* Department Budget Allocation & Usage (truthful live state, zero demo figures) */}
             <div className="mt-6">
-              <BudgetDashboardSection
-                departments={departments}
-                ledger={liveEmptyBudgetLedger}
-                accountingHref={routes.modulePath('accounting')}
-                canAddDepartment={false}
-                projectTimezone={project.timezone || 'Asia/Makassar'}
-                liveSourceNotice="Live project budget ledger and custom department APIs are not connected yet. Default departments reflect truthful unallocated balances with no sample figures."
-              />
+              <LiveBudget project={project}/>
             </div>
 
             {/* Building Areas & Recent Activity */}

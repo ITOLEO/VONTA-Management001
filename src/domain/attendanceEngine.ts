@@ -1,3 +1,4 @@
+import { isProjectLead } from '../domain/accountTypes';
 import type { MembershipStatus, ProjectRole } from './accountTypes';
 import type { Department, SpatialPin } from './types';
 
@@ -225,7 +226,7 @@ export function isEffectiveMandor(m: EffectiveMemberCapabilities | null | undefi
  */
 export function canDrawLocally(m: EffectiveMemberCapabilities | null | undefined): boolean {
   if (!isActiveMember(m) || !m) return false;
-  if (m.role === 'owner' || m.role === 'contractor') return true;
+  if (m.role === 'owner' || isProjectLead(m.role)) return true;
   if (m.hasMandorGrant) return true;
   return false;
 }
@@ -239,7 +240,7 @@ export function canDownloadWorkspaceView(
   m: EffectiveMemberCapabilities | null | undefined
 ): boolean {
   if (!isActiveMember(m) || !m) return false;
-  if (m.role === 'owner' || m.role === 'contractor') return true;
+  if (m.role === 'owner' || isProjectLead(m.role)) return true;
   return Boolean(m.canDownloadWorkspaceView);
 }
 
@@ -253,7 +254,7 @@ export function canShareWorkspaceView(
   m: EffectiveMemberCapabilities | null | undefined
 ): boolean {
   if (!isActiveMember(m) || !m) return false;
-  if (m.role === 'owner' || m.role === 'contractor') return true;
+  if (m.role === 'owner' || isProjectLead(m.role)) return true;
   return Boolean(m.canShareWorkspaceView);
 }
 
@@ -262,7 +263,7 @@ export function canManageWorkspaceOutputGrants(
   m: EffectiveMemberCapabilities | null | undefined
 ): boolean {
   if (!isActiveMember(m) || !m) return false;
-  return m.role === 'contractor';
+  return isProjectLead(m.role);
 }
 
 /**

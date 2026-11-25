@@ -13,7 +13,7 @@ import type {
 export const DEFAULT_AREA_ID = 'area-a03-ground';
 
 export const DEMO_SCHEMA_VERSION = 1;
-export const DEFAULT_BLUEPRINT_SRC = '/assets/aistudio/vonta_sample_blue_print__82ba6aba.png';
+export const DEFAULT_BLUEPRINT_SRC = '/media/paviliun-a03.png';
 
 export const DEMO_DEPARTMENTS: Department[] = ['Civil', 'Electrical', 'Plumbing', 'Finishing'];
 

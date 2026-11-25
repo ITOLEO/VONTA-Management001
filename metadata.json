@@ -1,6 +1,0 @@
-{
-  "name": "VONTA Management",
-  "description": "Precision at Every Pin — Construction spatial pin management interactive preview for Paviliun Kerja (A-03 R00).",
-  "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}

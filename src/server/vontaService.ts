@@ -64,6 +64,7 @@ export type PasswordChallengeEmailSender = (input: {
 }) => Promise<{ delivered: boolean; error?: string }>;
 
 export interface AuthenticatedActor {
+  isPlatformDeveloper?: boolean;
   userId: string;
   email: string;
   displayName: string;
@@ -472,7 +473,7 @@ export class VontaDomainService {
     };
   }
 
-  private async requireActiveContractor(actor: AuthenticatedActor, projectId: string) {
+  private async requireActiveProjectLead(actor: AuthenticatedActor, projectId: string) {
     const membership = await this.repo.getMembership(projectId, actor.userId);
     if (!membership || membership.status !== 'active') {
       throw new ServiceError(403, 'FORBIDDEN', 'You do not have active access to this project.');
@@ -481,7 +482,7 @@ export class VontaDomainService {
       throw new ServiceError(
         403,
         'FORBIDDEN_ROLE',
-        'Only an active project Contractor can perform this operation.'
+        'Only an active project Contractor or Architect can perform this operation.'
       );
     }
     const project = await this.repo.getProjectById(projectId);
@@ -577,7 +578,7 @@ export class VontaDomainService {
         throw new ServiceError(
           403,
           'FORBIDDEN_ROLE',
-          'Only a project Contractor can edit or promote a project draft.'
+          'Only a project Contractor or Architect can edit or promote a project draft.'
         );
       }
       const existingProject = await this.repo.getProjectById(input.existingDraftProjectId);
@@ -705,7 +706,7 @@ export class VontaDomainService {
       fileName?: string | null;
     }
   ): Promise<AuthorizedProject> {
-    const { membership, project } = await this.requireActiveContractor(actor, projectId);
+    const { membership, project } = await this.requireActiveProjectLead(actor, projectId);
 
     const fieldErrors: Record<string, string> = {};
     if (!input.areaName.trim()) fieldErrors.areaName = 'Area name is required.';
@@ -769,7 +770,7 @@ export class VontaDomainService {
       frameOffsetZM?: number;
     }
   ): Promise<{ area: ProjectAreaRecord; project: AuthorizedProject }> {
-    const { membership, project } = await this.requireActiveContractor(actor, projectId);
+    const { membership, project } = await this.requireActiveProjectLead(actor, projectId);
     const trimmedName = (input.name ?? '').trim();
     if (!trimmedName) {
       throw new ServiceError(400, 'VALIDATION_ERROR', 'Area name is required.', {
@@ -854,7 +855,7 @@ export class VontaDomainService {
     project: AuthorizedProject;
     deduplicated: boolean;
   }> {
-    const { membership, project } = await this.requireActiveContractor(actor, projectId);
+    const { membership, project } = await this.requireActiveProjectLead(actor, projectId);
 
     const submissionKey = (input.submissionKey || '').trim() || `job-${randomUUID()}`;
     const existingJob = await this.repo.findJobBySubmissionKey(project.id, submissionKey);
@@ -1186,7 +1187,7 @@ export class VontaDomainService {
     projectId: string,
     jobId: string
   ): Promise<{ job: ProcessingJobRecord; project: AuthorizedProject }> {
-    const { membership, project } = await this.requireActiveContractor(actor, projectId);
+    const { membership, project } = await this.requireActiveProjectLead(actor, projectId);
     const job = await this.repo.getJobById(project.id, jobId);
     if (!job) {
       throw new ServiceError(404, 'JOB_NOT_FOUND', 'Processing job not found.');
@@ -1234,7 +1235,7 @@ export class VontaDomainService {
       calibration?: BlueprintCalibration;
     }
   ): Promise<{ job: ProcessingJobRecord; project: AuthorizedProject }> {
-    const { membership, project } = await this.requireActiveContractor(actor, projectId);
+    const { membership, project } = await this.requireActiveProjectLead(actor, projectId);
     const job = await this.repo.getJobById(project.id, jobId);
     if (!job) {
       throw new ServiceError(404, 'JOB_NOT_FOUND', 'Processing job not found.');
@@ -1328,9 +1329,9 @@ export class VontaDomainService {
     job: ProcessingJobRecord;
     project: AuthorizedProject;
   }> {
-    const { membership, project } = await this.requireActiveContractor(actor, projectId);
+    const { membership, project } = await this.requireActiveProjectLead(actor, projectId);
     if (!canPublishModel(membership.role)) {
-      throw new ServiceError(403, 'FORBIDDEN_ROLE', 'Only the project Contractor can publish a 3D model.');
+      throw new ServiceError(403, 'FORBIDDEN_ROLE', 'Only a project Contractor or Architect can publish a 3D model.');
     }
 
     const job = await this.repo.getJobById(project.id, jobId);
@@ -1592,7 +1593,7 @@ export class VontaDomainService {
       polygonMm: Array<{ xMm: number; zMm: number }>;
     }
   ): Promise<{ modelVersion: ModelVersionRecord; project: AuthorizedProject }> {
-    const { membership, project } = await this.requireActiveContractor(actor, projectId);
+    const { membership, project } = await this.requireActiveProjectLead(actor, projectId);
 
     const check = validateClosedRoomBoundary({
       name: input.name || '',
@@ -1683,7 +1684,7 @@ export class VontaDomainService {
     projectId: string,
     blueprintId: string
   ): Promise<BlueprintImpactSummary> {
-    const { project } = await this.requireActiveContractor(actor, projectId);
+    const { project } = await this.requireActiveProjectLead(actor, projectId);
     const [assets, blueprints, versions, pins] = await Promise.all([
       this.repo.listAssets(project.id),
       this.repo.listBlueprintsForProject(project.id),
@@ -1752,7 +1753,7 @@ export class VontaDomainService {
     blueprintId: string,
     input: { mode: 'remove' | 'retire'; reason?: string }
   ): Promise<{ impact: BlueprintImpactSummary; project: AuthorizedProject }> {
-    const { membership, project } = await this.requireActiveContractor(actor, projectId);
+    const { membership, project } = await this.requireActiveProjectLead(actor, projectId);
     const impact = await this.getBlueprintImpact(actor, projectId, blueprintId);
 
     if (input.mode === 'remove' && !impact.canHardRemoveDraft) {
@@ -1973,7 +1974,7 @@ export class VontaDomainService {
       throw new ServiceError(
         403,
         'FORBIDDEN_ROLE',
-        'Only the project Contractor can edit project settings. Display names cannot grant permissions.'
+        'Only a project Contractor or Architect can edit project settings. Display names cannot grant permissions.'
       );
     }
 
@@ -2055,7 +2056,7 @@ export class VontaDomainService {
       throw new ServiceError(
         403,
         'FORBIDDEN_ROLE',
-        'Only the project Contractor can change the project password.'
+        'Only a project Contractor or Architect can change the project password.'
       );
     }
 
@@ -2197,7 +2198,7 @@ export class VontaDomainService {
       if (bp) return bp;
     }
 
-    const { project } = await this.requireActiveContractor(actor, projectId);
+    const { project } = await this.requireActiveProjectLead(actor, projectId);
     const blueprints = await this.repo.listBlueprintsForProject(project.id);
     const target = blueprints.find((b) => b.id === input.blueprintId);
     if (!target) {
@@ -2255,7 +2256,7 @@ export class VontaDomainService {
       throw new ServiceError(
         403,
         'FORBIDDEN',
-        'Only the project Contractor can delete this project.'
+        'Only a project Contractor or Architect can delete this project.'
       );
     }
 
@@ -2800,13 +2801,13 @@ export class SupabaseVontaRepository implements VontaStoreRepository {
   }
 
   async listMembershipsForUser(userId: string, email: string): Promise<ProjectMembership[]> {
-    const { data, error } = await this.client
-      .from('project_memberships')
-      .select('*')
-      .or(`user_id.eq.${userId},invited_email.ilike.${email}`);
+    const [mine, pending] = await Promise.all([
+      this.client.from('project_memberships').select('*').eq('user_id',userId),
+      this.client.from('project_memberships').select('*').eq('invited_email',email.trim().toLowerCase()).is('user_id',null).eq('status','invited'),
+    ]);
+    if (mine.error || pending.error) throw new ServiceError(500,'DB_ERROR','Project memberships could not be read.');
+    return [...mine.data,...pending.data].map(row=>this.mapMembership(row));
 
-    if (error) throw new ServiceError(500, 'DB_ERROR', error.message);
-    return (data ?? []).map((row) => this.mapMembership(row));
   }
 
   async getMembership(projectId: string, userId: string): Promise<ProjectMembership | null> {

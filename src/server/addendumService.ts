@@ -1,3 +1,4 @@
+import { isProjectLead } from '../domain/accountTypes';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { MembershipStatus, ProjectRole } from '../domain/accountTypes';
 import type { Department } from '../domain/types';
@@ -241,7 +242,7 @@ export class VontaAddendumService {
   listProjectMembers(actor: AuthenticatedActor, projectId: string): ProjectMemberDirectoryRecord[] {
     const caller = this.requireActiveMember(actor, projectId);
     const all = Array.from(this.members.values()).filter((m) => m.projectId === projectId);
-    if (caller.role === 'contractor' || caller.role === 'owner' || caller.hasMandorGrant) {
+    if (isProjectLead(caller.role) || caller.role === 'owner' || caller.hasMandorGrant) {
       return all.map((m) => ({ ...m }));
     }
     // Workers only see their own membership record
@@ -957,7 +958,7 @@ export class VontaAddendumService {
     status: IzinRequestStatus;
   }> {
     const caller = this.requireActiveMember(actor, projectId);
-    if (caller.role !== 'contractor' && caller.role !== 'owner') {
+    if (!isProjectLead(caller.role) && caller.role !== 'owner') {
       return [];
     }
     return Array.from(this.izinRequests.values())

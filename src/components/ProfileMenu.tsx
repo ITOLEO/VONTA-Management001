@@ -314,15 +314,15 @@ export function ProfileMenu({
                 <LogIn className="h-4 w-4 text-[#4F5C67]" aria-hidden="true" />
                 Sign in
               </Link>
-              <Link
-                to="/"
+              <button
+                type="button"
                 role="menuitem"
-                onClick={() => onOpenChange(false)}
+                onClick={() => {onOpenChange(false); onSignOut?.();}}
                 className="flex min-h-[42px] items-center gap-2 rounded-lg px-3 py-1.5 text-[14px] leading-[20px] font-medium text-[#4F5C67] transition-colors hover:bg-[#F4F3EF] hover:text-[#1B2A4A] focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-[#0B63CE] md:min-h-[38px]"
               >
                 <LogOut className="h-4 w-4" aria-hidden="true" />
                 Sign out of demo
-              </Link>
+              </button>
             </div>
           )}
         </div>

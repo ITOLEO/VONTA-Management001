@@ -1,5 +1,7 @@
+import { demoAccounts, demoForEmail } from '../domain/demoAccounts';
+import { Brand } from './LandingPage';
 import React, { useEffect, useState } from 'react';
-import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { AlertCircle, ArrowLeft, ArrowRight, CheckCircle2, Lock } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { supabase } from '../lib/supabaseClient';
@@ -25,6 +27,10 @@ export function AuthPage({ defaultMode = 'sign-in' }: { defaultMode?: AuthMode }
     completePasswordReset,
   } = useAuth();
 
+  const location = useLocation();
+  const requestedRole = searchParams.get('demo');
+  const demoAccount = demoAccounts.find(a=>a.role===requestedRole);
+  const returnTo = location.state?.from === '/admin' ? '/admin' : '/projects';
   const modeParam = searchParams.get('mode') as AuthMode | null;
   const mode: AuthMode =
     defaultMode === 'reset-password' || defaultMode === 'callback'
@@ -34,7 +40,7 @@ export function AuthPage({ defaultMode = 'sign-in' }: { defaultMode?: AuthMode }
         : defaultMode;
 
   const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('');
+  const [email, setEmail] = useState(demoAccount?.email ?? '');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [fieldErrors, setFieldErrors] = useState<AuthFieldErrors>({});
@@ -70,10 +76,10 @@ export function AuthPage({ defaultMode = 'sign-in' }: { defaultMode?: AuthMode }
 
   // If already authenticated on sign-in screen, route explicitly to /projects directory
   useEffect(() => {
-    if (status === 'authenticated' && mode === 'sign-in') {
-      navigate('/projects', { replace: true });
+    if (status === 'authenticated' && mode === 'sign-in' && !demoAccount) {
+      navigate(returnTo, { replace: true });
     }
-  }, [status, mode, navigate]);
+  }, [status, mode, navigate, demoAccount, returnTo]);
 
   const setMode = (next: 'sign-in' | 'create-account' | 'forgot-password') => {
     setFieldErrors({});
@@ -120,6 +126,16 @@ export function AuthPage({ defaultMode = 'sign-in' }: { defaultMode?: AuthMode }
     }
     setFieldErrors({});
 
+    if (mode === 'sign-in' && demoForEmail(trimmedEmail)) {
+      setSubmitting(true);
+      try {
+        const result = await fetch('/api/demo/login', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:trimmedEmail,password})});
+        if (!result.ok) throw new Error('Check your demo email and password.');
+        navigate('/demo/dashboard', {replace:true});
+      } catch (error) {setFormError(error instanceof Error ? error.message : 'Demo sign-in unavailable.');}
+      finally {setSubmitting(false);}
+      return;
+    }
     if (!isConfigured) {
       setFormError(
         'Supabase Auth is not configured in this environment. Set VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY to enable live sign-in.'
@@ -136,7 +152,7 @@ export function AuthPage({ defaultMode = 'sign-in' }: { defaultMode?: AuthMode }
           return;
         }
         // Always open /projects directory after fresh sign-in and wait for explicit project selection
-        navigate('/projects', { replace: true });
+        navigate(returnTo, { replace: true });
       } else if (mode === 'create-account') {
         const res = await signUp({ fullName, email: trimmedEmail, password });
         if (!res.ok) {
@@ -146,7 +162,7 @@ export function AuthPage({ defaultMode = 'sign-in' }: { defaultMode?: AuthMode }
         if (res.needsEmailConfirmation) {
           setFormInfo(res.info ?? 'Check your email to verify your account.');
         } else {
-          navigate('/projects', { replace: true });
+          navigate(returnTo, { replace: true });
         }
       } else if (mode === 'forgot-password') {
         const res = await sendPasswordRecovery(trimmedEmail);
@@ -165,43 +181,21 @@ export function AuthPage({ defaultMode = 'sign-in' }: { defaultMode?: AuthMode }
         setConfirmPassword('');
         setFormInfo(res.info ?? 'Your account password has been updated.');
       }
+    } catch {
+      setFormError('Could not reach the authentication service. Try again.');
     } finally {
       setSubmitting(false);
     }
   };
 
   return (
-    <div className="min-h-dvh flex flex-col bg-[#F4F3EF] text-[#1B2A4A]">
-      <header className="border-b border-[#D9DEE2] bg-white">
-        <div className="mx-auto flex h-16 max-w-[1200px] items-center justify-between px-4 sm:px-6 lg:px-8">
-          <Link
-            to="/"
-            className="text-[20px] leading-[24px] font-bold tracking-tight text-[#1B2A4A]"
-          >
-            VONTA
-          </Link>
-          <Link
-            to="/"
-            className="inline-flex min-h-[44px] items-center gap-1.5 text-[14px] leading-[20px] font-medium text-[#4F5C67] hover:text-[#1B2A4A]"
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-            Back to landing
-          </Link>
-        </div>
-      </header>
-
-      <main className="mx-auto flex w-full max-w-[460px] flex-1 flex-col justify-center px-4 py-10 sm:px-6">
-        <div className="rounded-xl border border-[#D9DEE2] bg-white p-6 sm:p-7">
-          {!isConfigured && (
-            <div className="mb-3 flex items-center gap-2 text-[13px] leading-[18px] font-semibold text-[#A64011]">
-              <Lock className="h-4 w-4 shrink-0" aria-hidden="true" />
-              Supabase Auth not configured in this environment
-            </div>
-          )}
-
+    <div className="vt-auth">
+      <header><Brand/><Link to="/">Back to home</Link></header>
+      <main><aside><img src="/media/hero.webp" alt="Architectural illustration of an Indonesian job site" /><div><span>VONTA Management</span><h2>Precision at<br/>Every Pin.</h2></div></aside>
+      <div className="vt-authform"><section>
           <h1 className="vonta-page-title text-[#1B2A4A]">
             {mode === 'sign-in'
-              ? 'Sign in to VONTA'
+              ? demoAccount ? 'Sign in to '+demoAccount.title.toLowerCase()+' demo' : 'Sign in to VONTA'
               : mode === 'create-account'
                 ? 'Create account'
                 : mode === 'forgot-password'
@@ -223,23 +217,8 @@ export function AuthPage({ defaultMode = 'sign-in' }: { defaultMode?: AuthMode }
                     : 'Your verification link has been processed.'}
           </p>
 
-          {!isConfigured && (
-            <div
-              role="status"
-              data-testid="auth-not-configured-notice"
-              className="mt-4 rounded-lg border border-[#D9DEE2] bg-[#F4F3EF]/80 p-3.5 text-[13px] leading-[18px] text-[#4F5C67]"
-            >
-              <div className="font-semibold text-[#1B2A4A]">
-                Staging environment variables not set
-              </div>
-              <p className="mt-1">
-                Configure <code className="rounded bg-white px-1">VITE_SUPABASE_URL</code> and{' '}
-                <code className="rounded bg-white px-1">VITE_SUPABASE_PUBLISHABLE_KEY</code> to
-                connect live authentication. Submitting will not open demo data.
-              </p>
-            </div>
-          )}
-
+          {!isConfigured && !demoAccount && <p role="status" className="vt-note">Live account access is waiting for configuration. Sample accounts are available.</p>}
+          {demoAccount && <p className="vt-note">Sample password <code>demo123123</code></p>}
           {mode === 'callback' ? (
             <div className="mt-5 space-y-4">
               {formInfo && (
@@ -463,24 +442,7 @@ export function AuthPage({ defaultMode = 'sign-in' }: { defaultMode?: AuthMode }
               )}
             </div>
           )}
-        </div>
-
-        {/* Explicitly isolated sample workspace entry */}
-        <div className="mt-5 rounded-xl border border-[#D9DEE2] bg-white p-4">
-          <div className="text-[13px] leading-[18px] font-semibold text-[#1B2A4A]">
-            Sample workspace
-          </div>
-          <p className="mt-1 text-[13px] leading-[18px] text-[#4F5C67]">
-            Explore Paviliun Kerja (A-03 R00) in an isolated local session without signing in.
-          </p>
-          <Link
-            to="/demo/projects"
-            className="mt-3 inline-flex min-h-[44px] w-full items-center justify-center gap-1.5 rounded-lg border border-[#D9DEE2] bg-[#F4F3EF]/60 px-4 py-2 text-[14px] leading-[20px] font-medium text-[#1B2A4A] transition-colors hover:bg-[#F4F3EF]"
-          >
-            Explore sample project
-            <ArrowRight className="h-4 w-4" aria-hidden="true" />
-          </Link>
-        </div>
+        </section><Link className="vt-under" to="/demo/access">Choose a demo account</Link></div>
       </main>
     </div>
   );

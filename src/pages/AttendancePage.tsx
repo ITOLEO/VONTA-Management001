@@ -1,3 +1,4 @@
+import { isProjectLead } from '../domain/accountTypes';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import {
@@ -320,7 +321,7 @@ export const DemoAttendancePage: React.FC = () => {
 
       const canCorrect = Boolean(
         dayShift &&
-          (addendum.activePersona.role === 'contractor' ||
+          (isProjectLead(addendum.activePersona.role) ||
             (addendum.activePersona.hasMandorGrant &&
               dayShift.assignedMandorUserIds.includes(addendum.activePersona.userId)))
       );
